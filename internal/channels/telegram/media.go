@@ -228,9 +228,13 @@ func (c *Channel) downloadMedia(ctx context.Context, fileID string, maxBytes int
 		downloadURL = fmt.Sprintf("https://api.telegram.org/file/bot%s/%s", c.config.Token, file.FilePath)
 	}
 
-	// SSRF Protection: check the resolved URL before connecting
-	if err := tools.CheckSSRF(downloadURL); err != nil {
-		return "", fmt.Errorf("SSRF protection: %w", err)
+	// SSRF Protection: check the resolved URL before connecting.
+	// We skip the check IF the host is our explicitly configured (trusted) API server.
+	isTrusted := c.config.APIServer != "" && strings.HasPrefix(downloadURL, c.config.APIServer)
+	if !isTrusted {
+		if err := tools.CheckSSRF(downloadURL); err != nil {
+			return "", fmt.Errorf("SSRF protection: %w", err)
+		}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", downloadURL, nil)

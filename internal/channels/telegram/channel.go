@@ -71,9 +71,9 @@ func New(cfg config.TelegramConfig, msgBus *bus.MessageBus, pairingSvc store.Pai
 		if parseErr != nil {
 			return nil, fmt.Errorf("invalid proxy URL %q: %w", cfg.Proxy, parseErr)
 		}
-		httpClient.Transport = &http.Transport{
-			Proxy: http.ProxyURL(proxyURL),
-		}
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = http.ProxyURL(proxyURL)
+		httpClient.Transport = transport
 	}
 	opts = append(opts, telego.WithHTTPClient(httpClient))
 

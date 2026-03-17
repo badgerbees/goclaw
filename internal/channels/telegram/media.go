@@ -237,12 +237,23 @@ func (c *Channel) downloadMedia(ctx context.Context, fileID string, maxBytes int
 		}
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", downloadURL, nil)
+	// Use a generous timeout for media downloads (large files via local Bot API
+	// can be up to 200 MB). The shared httpClient has a 30s timeout suited for
+	// API calls, so we override per-request with a dedicated context.
+	dlCtx, dlCancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer dlCancel()
+
+	req, err := http.NewRequestWithContext(dlCtx, "GET", downloadURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("create download request: %w", err)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	// Clone the shared client without the 30s Timeout so the per-request
+	// context (5 min) governs the download duration instead.
+	dlClient := *c.httpClient
+	dlClient.Timeout = 0
+
+	resp, err := dlClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("download file: %w", err)
 	}

@@ -14,6 +14,7 @@ import (
 	"github.com/mymmrac/telego"
 
 	"github.com/nextlevelbuilder/goclaw/internal/channels/media"
+	"github.com/nextlevelbuilder/goclaw/internal/tools"
 )
 
 const (
@@ -227,7 +228,17 @@ func (c *Channel) downloadMedia(ctx context.Context, fileID string, maxBytes int
 		downloadURL = fmt.Sprintf("https://api.telegram.org/file/bot%s/%s", c.config.Token, file.FilePath)
 	}
 
-	resp, err := http.Get(downloadURL)
+	// SSRF Protection: check the resolved URL before connecting
+	if err := tools.CheckSSRF(downloadURL); err != nil {
+		return "", fmt.Errorf("SSRF protection: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", downloadURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("create download request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("download file: %w", err)
 	}

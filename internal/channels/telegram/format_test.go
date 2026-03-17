@@ -76,7 +76,7 @@ func TestChunkHTML(t *testing.T) {
 			want:   []string{"hello", "world"},
 		},
 		{
-			name:   "avoid mid-tag split",
+			name:   "tag exceeds maxLen uses fallback",
 			input:  "hello <a href='url'>link</a> world",
 			maxLen: 12,
 			want:   []string{"hello", "<a href='url", "'>link</a>", "world"},

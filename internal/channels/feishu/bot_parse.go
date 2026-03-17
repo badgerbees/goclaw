@@ -196,3 +196,26 @@ func resolveMentions(text string, mentions []mentionInfo, botOpenID string) stri
 	}
 	return strings.TrimSpace(text)
 }
+
+// buildThreadHistoryContent converts a list of MessageItem to a readable history block.
+func buildThreadHistoryContent(items []MessageItem) string {
+	if len(items) == 0 {
+		return ""
+	}
+	var lines []string
+	for _, item := range items {
+		if item.Deleted {
+			continue
+		}
+		// Try to parse sender name if it's the bot
+		sender := item.Sender.ID
+		if item.Sender.SenderType == "app" {
+			sender = "Bot"
+		}
+		content := parseMessageContent(item.Body.Content, item.MsgType)
+		if content != "" {
+			lines = append(lines, fmt.Sprintf("[%s]: %s", sender, content))
+		}
+	}
+	return strings.Join(lines, "\n")
+}

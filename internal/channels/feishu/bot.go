@@ -119,8 +119,13 @@ func (c *Channel) handleMessageEvent(ctx context.Context, event *MessageEvent) {
 
 	// 8. Topic session
 	chatID := mc.ChatID
+	var threadHistory string
 	if mc.RootID != "" && c.cfg.TopicSessionMode == "enabled" {
 		chatID = fmt.Sprintf("%s:topic:%s", mc.ChatID, mc.RootID)
+		// Fetch full thread history for better context
+		if history, err := c.fetchFeishuThreadHistory(ctx, mc.RootID); err == nil && history != "" {
+			threadHistory = history
+		}
 	}
 
 	slog.Debug("feishu message received",
@@ -155,19 +160,21 @@ func (c *Channel) handleMessageEvent(ctx context.Context, event *MessageEvent) {
 		metadata["sender_open_id"] = sender.SenderID.OpenID
 	}
 
-	// Annotate content with sender identity so the agent knows who is messaging.
-	if senderName != "" {
-		if mc.ChatType == "group" {
-			annotated := fmt.Sprintf("[From: %s]\n%s", senderName, content)
-			if c.historyLimit > 0 {
-				content = c.groupHistory.BuildContext(chatID, annotated, c.historyLimit)
-			} else {
-				content = annotated
-			}
+	// Build final content with group context (pending history + thread history + sender annotation).
+	if mc.ChatType == "group" && senderName != "" {
+		annotated := fmt.Sprintf("[From: %s]\n%s", senderName, content)
+		if threadHistory != "" {
+			// Prepend thread history if available (Topic session mode)
+			content = fmt.Sprintf("--- Topic Thread History ---\n%s\n---------------------------\n%s", threadHistory, annotated)
+		} else if c.historyLimit > 0 {
+			// Regular group history context
+			content = c.groupHistory.BuildContext(chatID, annotated, c.historyLimit)
 		} else {
-			// DM: annotate with sender identity so the agent knows who is messaging.
-			content = fmt.Sprintf("[From: %s]\n%s", senderName, content)
+			content = annotated
 		}
+	} else if mc.ChatType == "p2p" && senderName != "" {
+		// DM: annotate with sender identity so the agent knows who is messaging.
+		content = fmt.Sprintf("[From: %s]\n%s", senderName, content)
 	}
 
 	// 10. Resolve inbound media (image, file, audio, video, sticker)
@@ -260,7 +267,6 @@ func (c *Channel) handleMessageEvent(ctx context.Context, event *MessageEvent) {
 		Metadata:     metadata,
 	})
 
-	// Clear pending history after sending to agent.
 	if mc.ChatType == "group" {
 		c.groupHistory.Clear(chatID)
 	}
@@ -276,24 +282,46 @@ func (c *Channel) fetchReplyContext(ctx context.Context, parentID string) string
 		slog.Debug("feishu: failed to fetch parent message", "parent_id", parentID, "error", err)
 		return ""
 	}
-	if len(resp.Items) == 0 {
+	if resp == nil {
 		return ""
 	}
 
-	item := &resp.Items[0]
-	body := parseMessageContent(item.Body.Content, item.MsgType)
+	body := parseMessageContent(resp.Body.Content, resp.MsgType)
 	if body == "" {
 		return ""
 	}
 
 	// Resolve sender name
 	senderName := "unknown"
-	if item.Sender.ID != "" {
-		if name := c.resolveSenderName(ctx, item.Sender.ID); name != "" {
+	if resp.Sender.ID != "" {
+		if name := c.resolveSenderName(ctx, resp.Sender.ID); name != "" {
 			senderName = name
 		}
 	}
 
 	body = channels.Truncate(body, replyContextMaxLen)
 	return fmt.Sprintf("[Replying to %s]\n%s\n[/Replying]", senderName, body)
+}
+// fetchFeishuThreadHistory retrieves all messages in a thread starting from rootID.
+func (c *Channel) fetchFeishuThreadHistory(ctx context.Context, rootID string) (string, error) {
+	// 1. Get the root message to find the thread_id (omt_xxx)
+	rootMsg, err := c.client.GetMessage(ctx, rootID)
+	if err != nil {
+		return "", err
+	}
+
+	threadID := rootMsg.ThreadID
+	if threadID == "" {
+		// Fallback: if there's no thread_id, we can't fetch the whole thread efficiently
+		return "", nil
+	}
+
+	// 2. List all messages in the thread
+	items, _, err := c.client.ListMessages(ctx, "thread", threadID, 20, "")
+	if err != nil {
+		return "", err
+	}
+
+	// 3. Convert to readable text
+	return buildThreadHistoryContent(items), nil
 }

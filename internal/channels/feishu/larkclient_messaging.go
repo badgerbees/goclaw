@@ -36,6 +36,76 @@ func (c *LarkClient) SendMessage(ctx context.Context, receiveIDType, receiveID, 
 	return &data, nil
 }
 
+type MessageItem struct {
+	MessageID   string `json:"message_id"`
+	RootID      string `json:"root_id"`
+	ParentID    string `json:"parent_id"`
+	ThreadID    string `json:"thread_id"`
+	MsgType     string `json:"msg_type"`
+	CreateTime  string `json:"create_time"`
+	UpdateTime  string `json:"update_time"`
+	Deleted     bool   `json:"deleted"`
+	Updated     bool   `json:"updated"`
+	ChatID      string `json:"chat_id"`
+	Sender      struct {
+		ID         string `json:"id"`
+		IDType     string `json:"id_type"`
+		SenderType string `json:"sender_type"`
+		TenantKey  string `json:"tenant_key"`
+	} `json:"sender"`
+	Body struct {
+		Content string `json:"content"`
+	} `json:"body"`
+	Mentions []struct {
+		Key string `json:"key"`
+		ID  string `json:"id"`
+	} `json:"mentions"`
+}
+
+func (c *LarkClient) GetMessage(ctx context.Context, messageID string) (*MessageItem, error) {
+	path := "/open-apis/im/v1/messages/" + messageID
+	resp, err := c.doJSON(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Code != 0 {
+		return nil, fmt.Errorf("get message: code=%d msg=%s", resp.Code, resp.Msg)
+	}
+	var data struct {
+		Items []MessageItem `json:"items"`
+	}
+	json.Unmarshal(resp.Data, &data)
+	if len(data.Items) == 0 {
+		return nil, fmt.Errorf("message %s not found", messageID)
+	}
+	return &data.Items[0], nil
+}
+
+func (c *LarkClient) ListMessages(ctx context.Context, containerIDType, containerID string, pageSize int, pageToken string) ([]MessageItem, string, error) {
+	path := fmt.Sprintf("/open-apis/im/v1/messages?container_id_type=%s&container_id=%s", containerIDType, containerID)
+	if pageSize > 0 {
+		path += fmt.Sprintf("&page_size=%d", pageSize)
+	}
+	if pageToken != "" {
+		path += "&page_token=" + pageToken
+	}
+
+	resp, err := c.doJSON(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	if resp.Code != 0 {
+		return nil, "", fmt.Errorf("list messages: code=%d msg=%s", resp.Code, resp.Msg)
+	}
+	var data struct {
+		Items     []MessageItem `json:"items"`
+		PageToken string        `json:"page_token"`
+		HasMore   bool          `json:"has_more"`
+	}
+	json.Unmarshal(resp.Data, &data)
+	return data.Items, data.PageToken, nil
+}
+
 // --- IM API: Images ---
 
 func (c *LarkClient) DownloadImage(ctx context.Context, imageKey string) ([]byte, error) {
@@ -91,39 +161,6 @@ func (c *LarkClient) UploadFile(ctx context.Context, data io.Reader, fileName, f
 
 // --- IM API: Get Message ---
 
-// GetMessageResp holds the response from GET /open-apis/im/v1/messages/{message_id}.
-type GetMessageResp struct {
-	Items []struct {
-		MessageID   string `json:"message_id"`
-		MsgType     string `json:"msg_type"`
-		Body        struct {
-			Content string `json:"content"`
-		} `json:"body"`
-		Sender struct {
-			ID         string `json:"id"`
-			IDType     string `json:"id_type"`
-			SenderType string `json:"sender_type"`
-		} `json:"sender"`
-	} `json:"items"`
-}
-
-// GetMessage retrieves a message by ID.
-// Lark API: GET /open-apis/im/v1/messages/{message_id}
-func (c *LarkClient) GetMessage(ctx context.Context, messageID string) (*GetMessageResp, error) {
-	path := fmt.Sprintf("/open-apis/im/v1/messages/%s", messageID)
-	resp, err := c.doJSON(ctx, "GET", path, nil)
-	if err != nil {
-		return nil, err
-	}
-	if resp.Code != 0 {
-		return nil, fmt.Errorf("get message: code=%d msg=%s", resp.Code, resp.Msg)
-	}
-	var data GetMessageResp
-	if err := json.Unmarshal(resp.Data, &data); err != nil {
-		return nil, fmt.Errorf("unmarshal get message: %w", err)
-	}
-	return &data, nil
-}
 
 // --- IM API: Message Resources ---
 

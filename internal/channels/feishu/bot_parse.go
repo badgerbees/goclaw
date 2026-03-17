@@ -225,11 +225,16 @@ func (c *Channel) buildThreadHistoryContent(ctx context.Context, items []Message
 			// Resolve mentions in history content
 			var mentions []mentionInfo
 			for _, m := range item.Mentions {
+				name := ""
+				if c.botOpenID != "" && m.ID == c.botOpenID {
+					// Bot mention - resolveMentions will strip it if we pass the ID
+				} else {
+					name = c.resolveSenderName(ctx, m.ID)
+				}
 				mentions = append(mentions, mentionInfo{
 					Key:    m.Key,
 					OpenID: m.ID,
-					// Mentions in ListMessages items don't include Name, 
-					// but resolveMentions can still strip the bot mention by ID.
+					Name:   name,
 				})
 			}
 			content = resolveMentions(content, mentions, c.botOpenID)

@@ -63,54 +63,6 @@ type MessageItem struct {
 	} `json:"mentions"`
 }
 
-func (c *LarkClient) GetMessage(ctx context.Context, messageID string) (*MessageItem, error) {
-	path := "/open-apis/im/v1/messages/" + messageID
-	resp, err := c.doJSON(ctx, "GET", path, nil)
-	if err != nil {
-		return nil, err
-	}
-	if resp.Code != 0 {
-		return nil, fmt.Errorf("get message: code=%d msg=%s", resp.Code, resp.Msg)
-	}
-	var data struct {
-		Items []MessageItem `json:"items"`
-	}
-	if err := json.Unmarshal(resp.Data, &data); err != nil {
-		return nil, fmt.Errorf("unmarshal MessageItem: %w", err)
-	}
-	if len(data.Items) == 0 {
-		return nil, fmt.Errorf("message %s not found", messageID)
-	}
-	return &data.Items[0], nil
-}
-
-func (c *LarkClient) ListMessages(ctx context.Context, containerIDType, containerID string, pageSize int, pageToken string) ([]MessageItem, string, error) {
-	path := fmt.Sprintf("/open-apis/im/v1/messages?container_id_type=%s&container_id=%s",
-		url.QueryEscape(containerIDType), url.QueryEscape(containerID))
-	if pageSize > 0 {
-		path += fmt.Sprintf("&page_size=%d", pageSize)
-	}
-	if pageToken != "" {
-		path += "&page_token=" + pageToken
-	}
-
-	resp, err := c.doJSON(ctx, "GET", path, nil)
-	if err != nil {
-		return nil, "", err
-	}
-	if resp.Code != 0 {
-		return nil, "", fmt.Errorf("list messages: code=%d msg=%s", resp.Code, resp.Msg)
-	}
-	var data struct {
-		Items     []MessageItem `json:"items"`
-		PageToken string        `json:"page_token"`
-		HasMore   bool          `json:"has_more"`
-	}
-	if err := json.Unmarshal(resp.Data, &data); err != nil {
-		return nil, "", fmt.Errorf("unmarshal ListMessages response: %w", err)
-	}
-	return data.Items, data.PageToken, nil
-}
 
 // --- IM API: Images ---
 
@@ -166,6 +118,59 @@ func (c *LarkClient) UploadFile(ctx context.Context, data io.Reader, fileName, f
 }
 
 // --- IM API: Get Message ---
+
+// GetMessage retrieves a message by ID.
+// Lark API: GET /open-apis/im/v1/messages/{message_id}
+func (c *LarkClient) GetMessage(ctx context.Context, messageID string) (*MessageItem, error) {
+	path := "/open-apis/im/v1/messages/" + messageID
+	resp, err := c.doJSON(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Code != 0 {
+		return nil, fmt.Errorf("get message: code=%d msg=%s", resp.Code, resp.Msg)
+	}
+	var data struct {
+		Items []MessageItem `json:"items"`
+	}
+	if err := json.Unmarshal(resp.Data, &data); err != nil {
+		return nil, fmt.Errorf("unmarshal MessageItem: %w", err)
+	}
+	if len(data.Items) == 0 {
+		return nil, fmt.Errorf("message %s not found", messageID)
+	}
+	return &data.Items[0], nil
+}
+
+// ListMessages retrieves all messages from a container (e.g. "thread").
+// Lark API: GET /open-apis/im/v1/messages
+func (c *LarkClient) ListMessages(ctx context.Context, containerIDType, containerID string, pageSize int, pageToken string) ([]MessageItem, string, error) {
+	path := fmt.Sprintf("/open-apis/im/v1/messages?container_id_type=%s&container_id=%s",
+		url.QueryEscape(containerIDType), url.QueryEscape(containerID))
+	if pageSize > 0 {
+		path += fmt.Sprintf("&page_size=%d", pageSize)
+	}
+	if pageToken != "" {
+		path += "&page_token=" + pageToken
+	}
+
+	resp, err := c.doJSON(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	if resp.Code != 0 {
+		return nil, "", fmt.Errorf("list messages: code=%d msg=%s", resp.Code, resp.Msg)
+	}
+	var data struct {
+		Items     []MessageItem `json:"items"`
+		PageToken string        `json:"page_token"`
+		HasMore   bool          `json:"has_more"`
+	}
+	if err := json.Unmarshal(resp.Data, &data); err != nil {
+		return nil, "", fmt.Errorf("unmarshal ListMessages response: %w", err)
+	}
+	return data.Items, data.PageToken, nil
+}
 
 
 // --- IM API: Message Resources ---

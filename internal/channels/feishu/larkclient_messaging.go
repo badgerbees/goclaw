@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"strconv"
 )
 
@@ -31,7 +32,7 @@ func (c *LarkClient) SendMessage(ctx context.Context, receiveIDType, receiveID, 
 	}
 	var data SendMessageResp
 	if err := json.Unmarshal(resp.Data, &data); err != nil {
-		return nil, fmt.Errorf("unmarshal response: %w", err)
+		return nil, fmt.Errorf("unmarshal SendMessageResp: %w", err)
 	}
 	return &data, nil
 }
@@ -74,7 +75,9 @@ func (c *LarkClient) GetMessage(ctx context.Context, messageID string) (*Message
 	var data struct {
 		Items []MessageItem `json:"items"`
 	}
-	json.Unmarshal(resp.Data, &data)
+	if err := json.Unmarshal(resp.Data, &data); err != nil {
+		return nil, fmt.Errorf("unmarshal MessageItem: %w", err)
+	}
 	if len(data.Items) == 0 {
 		return nil, fmt.Errorf("message %s not found", messageID)
 	}
@@ -82,7 +85,8 @@ func (c *LarkClient) GetMessage(ctx context.Context, messageID string) (*Message
 }
 
 func (c *LarkClient) ListMessages(ctx context.Context, containerIDType, containerID string, pageSize int, pageToken string) ([]MessageItem, string, error) {
-	path := fmt.Sprintf("/open-apis/im/v1/messages?container_id_type=%s&container_id=%s", containerIDType, containerID)
+	path := fmt.Sprintf("/open-apis/im/v1/messages?container_id_type=%s&container_id=%s",
+		url.QueryEscape(containerIDType), url.QueryEscape(containerID))
 	if pageSize > 0 {
 		path += fmt.Sprintf("&page_size=%d", pageSize)
 	}
@@ -102,7 +106,9 @@ func (c *LarkClient) ListMessages(ctx context.Context, containerIDType, containe
 		PageToken string        `json:"page_token"`
 		HasMore   bool          `json:"has_more"`
 	}
-	json.Unmarshal(resp.Data, &data)
+	if err := json.Unmarshal(resp.Data, &data); err != nil {
+		return nil, "", fmt.Errorf("unmarshal ListMessages response: %w", err)
+	}
 	return data.Items, data.PageToken, nil
 }
 
@@ -128,7 +134,7 @@ func (c *LarkClient) UploadImage(ctx context.Context, data io.Reader) (string, e
 		ImageKey string `json:"image_key"`
 	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return "", fmt.Errorf("unmarshal response: %w", err)
+		return "", fmt.Errorf("unmarshal UploadImage response: %w", err)
 	}
 	return result.ImageKey, nil
 }
@@ -154,7 +160,7 @@ func (c *LarkClient) UploadFile(ctx context.Context, data io.Reader, fileName, f
 		FileKey string `json:"file_key"`
 	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return "", fmt.Errorf("unmarshal response: %w", err)
+		return "", fmt.Errorf("unmarshal UploadFile response: %w", err)
 	}
 	return result.FileKey, nil
 }
@@ -186,7 +192,7 @@ func (c *LarkClient) CreateCard(ctx context.Context, cardType, data string) (str
 		CardID string `json:"card_id"`
 	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return "", fmt.Errorf("unmarshal response: %w", err)
+		return "", fmt.Errorf("unmarshal CreateCard response: %w", err)
 	}
 	return result.CardID, nil
 }
@@ -247,7 +253,7 @@ func (c *LarkClient) AddMessageReaction(ctx context.Context, messageID, emojiTyp
 		ReactionID string `json:"reaction_id"`
 	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return "", fmt.Errorf("unmarshal response: %w", err)
+		return "", fmt.Errorf("unmarshal AddMessageReaction response: %w", err)
 	}
 	return result.ReactionID, nil
 }
@@ -284,7 +290,7 @@ func (c *LarkClient) GetBotInfo(ctx context.Context) (string, error) {
 		} `json:"bot"`
 	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return "", fmt.Errorf("unmarshal response: %w", err)
+		return "", fmt.Errorf("unmarshal GetBotInfo response: %w", err)
 	}
 	return result.Bot.OpenID, nil
 }
@@ -306,7 +312,7 @@ func (c *LarkClient) GetUser(ctx context.Context, userID, userIDType string) (st
 		} `json:"user"`
 	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return "", fmt.Errorf("unmarshal response: %w", err)
+		return "", fmt.Errorf("unmarshal GetUser response: %w", err)
 	}
 	return result.User.Name, nil
 }

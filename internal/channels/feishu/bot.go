@@ -123,7 +123,9 @@ func (c *Channel) handleMessageEvent(ctx context.Context, event *MessageEvent) {
 	if mc.RootID != "" && c.cfg.TopicSessionMode == "enabled" {
 		chatID = fmt.Sprintf("%s:topic:%s", mc.ChatID, mc.RootID)
 		// Fetch full thread history for better context
-		if history, err := c.fetchFeishuThreadHistory(ctx, mc.RootID); err == nil && history != "" {
+		if history, err := c.fetchFeishuThreadHistory(ctx, mc.RootID); err != nil {
+			slog.Warn("feishu fetch thread history failed", "root_id", mc.RootID, "error", err)
+		} else if history != "" {
 			threadHistory = history
 		}
 	}
@@ -304,13 +306,23 @@ func (c *Channel) fetchReplyContext(ctx context.Context, parentID string) string
 }
 // fetchFeishuThreadHistory retrieves all messages in a thread starting from rootID.
 func (c *Channel) fetchFeishuThreadHistory(ctx context.Context, rootID string) (string, error) {
-	// 1. Get the root message to find the thread_id (omt_xxx)
-	rootMsg, err := c.client.GetMessage(ctx, rootID)
-	if err != nil {
-		return "", err
+	var threadID string
+
+	// 1. Check cache for thread_id (omt_xxx)
+	if val, ok := c.threadIDCache.Load(rootID); ok {
+		threadID = val.(string)
+	} else {
+		// Get the root message to find the thread_id
+		rootMsg, err := c.client.GetMessage(ctx, rootID)
+		if err != nil {
+			return "", err
+		}
+		threadID = rootMsg.ThreadID
+		if threadID != "" {
+			c.threadIDCache.Store(rootID, threadID)
+		}
 	}
 
-	threadID := rootMsg.ThreadID
 	if threadID == "" {
 		// Fallback: if there's no thread_id, we can't fetch the whole thread efficiently
 		return "", nil
@@ -323,5 +335,5 @@ func (c *Channel) fetchFeishuThreadHistory(ctx context.Context, rootID string) (
 	}
 
 	// 3. Convert to readable text
-	return buildThreadHistoryContent(items), nil
+	return c.buildThreadHistoryContent(ctx, items), nil
 }

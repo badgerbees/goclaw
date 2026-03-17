@@ -44,6 +44,7 @@ type Channel struct {
 	groupAllowList  []string
 	groupHistory    *channels.PendingHistory
 	historyLimit    int
+	threadIDCache   sync.Map // root_id (om_xxx) → thread_id (omt_xxx)
 	stopCh          chan struct{}
 	httpServer      *http.Server
 	wsClient        *WSClient

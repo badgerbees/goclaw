@@ -1,6 +1,7 @@
 package feishu
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -198,7 +199,7 @@ func resolveMentions(text string, mentions []mentionInfo, botOpenID string) stri
 }
 
 // buildThreadHistoryContent converts a list of MessageItem to a readable history block.
-func buildThreadHistoryContent(items []MessageItem) string {
+func (c *Channel) buildThreadHistoryContent(ctx context.Context, items []MessageItem) string {
 	if len(items) == 0 {
 		return ""
 	}
@@ -207,14 +208,35 @@ func buildThreadHistoryContent(items []MessageItem) string {
 		if item.Deleted {
 			continue
 		}
-		// Try to parse sender name if it's the bot
-		sender := item.Sender.ID
+
+		// Resolve sender name
+		senderName := ""
 		if item.Sender.SenderType == "app" {
-			sender = "Bot"
+			senderName = "Bot"
+		} else {
+			senderName = c.resolveSenderName(ctx, item.Sender.ID)
+			if senderName == "" {
+				senderName = item.Sender.ID // Fallback to raw ID if resolution fails
+			}
 		}
+
 		content := parseMessageContent(item.Body.Content, item.MsgType)
 		if content != "" {
-			lines = append(lines, fmt.Sprintf("[%s]: %s", sender, content))
+			// Resolve mentions in history content
+			var mentions []mentionInfo
+			for _, m := range item.Mentions {
+				mentions = append(mentions, mentionInfo{
+					Key:    m.Key,
+					OpenID: m.ID,
+					// Mentions in ListMessages items don't include Name, 
+					// but resolveMentions can still strip the bot mention by ID.
+				})
+			}
+			content = resolveMentions(content, mentions, c.botOpenID)
+
+			if content != "" {
+				lines = append(lines, fmt.Sprintf("[%s]: %s", senderName, content))
+			}
 		}
 	}
 	return strings.Join(lines, "\n")

@@ -22,6 +22,7 @@ var (
 	parseErrRe           = regexp.MustCompile(`(?i)can't parse entities|parse entities|find end of the entity`)
 	messageNotModifiedRe = regexp.MustCompile(`(?i)message is not modified`)
 	threadNotFoundRe     = regexp.MustCompile(`(?i)message thread not found`)
+	messageTooLongRe     = regexp.MustCompile(`(?i)message is too long|entities too long`)
 	htmlTagRe            = regexp.MustCompile(`<[^>]*>`)
 )
 
@@ -269,8 +270,10 @@ func (c *Channel) sendMediaMessage(ctx context.Context, chatID int64, msg bus.Ou
 
 // sendHTML sends a single HTML message, falling back to plain text if Telegram rejects the HTML.
 // replyTo and threadID are optional (0 = omit). General topic (1) is handled by resolveThreadIDForSend.
-func (c *Channel) sendHTML(ctx context.Context, chatID int64, html string, replyTo, threadID int) error {
-	tgMsg := tu.Message(tu.ID(chatID), html)
+func (c *Channel) sendHTML(ctx context.Context, chatID int64, htmlContent string, replyTo, threadID int) error {
+	// Telegram limit is 4096, but we use a lower safety threshold.
+	// If a message is rejected because it's too long, we split it further.
+	tgMsg := tu.Message(tu.ID(chatID), htmlContent)
 	tgMsg.ParseMode = telego.ModeHTML
 
 	// TS ref: buildTelegramThreadParams() — General topic (1) must be omitted.
@@ -288,17 +291,71 @@ func (c *Channel) sendHTML(ctx context.Context, chatID int64, html string, reply
 		_, e := c.bot.SendMessage(ctx, tgMsg)
 		return e
 	})
-	if err != nil && parseErrRe.MatchString(err.Error()) {
-		slog.Warn("HTML parse failed, falling back to plain text", "error", err)
-		tgMsg.ParseMode = ""
-		tgMsg.Text = stripHTML(tgMsg.Text)
-		_, err = c.bot.SendMessage(ctx, tgMsg)
-	}
-	// TS ref: withTelegramThreadFallback — retry without thread ID when topic is deleted.
-	if err != nil && tgMsg.MessageThreadID != 0 && threadNotFoundRe.MatchString(err.Error()) {
-		slog.Warn("thread not found, retrying without message_thread_id", "thread_id", tgMsg.MessageThreadID)
-		tgMsg.MessageThreadID = 0
-		_, err = c.bot.SendMessage(ctx, tgMsg)
+
+	if err != nil {
+		errStr := err.Error()
+
+		// Case 1: Message too long. Split and retry recursively.
+		if messageTooLongRe.MatchString(errStr) {
+			slog.Warn("Telegram rejected message as too long, splitting further", "len", len(htmlContent))
+			// Reduce maxLen significantly for the retry to ensure it fits.
+			// 4000 might have been too close if Telegram counts things differently.
+			// We split this specific chunk into two or more parts using the standard chunker.
+			newMaxLen := len(htmlContent) / 2
+			if newMaxLen < 100 {
+				return err // too small to split meaningfully
+			}
+
+			// We use chunkHTML but with a smaller maxLen.
+			// Note: chunkHTML is in format.go and is exported? No, it's package-private but in the same package.
+			innerChunks := chunkHTML(htmlContent, newMaxLen)
+			for i, chunk := range innerChunks {
+				r := 0
+				if i == 0 {
+					r = replyTo
+				}
+				if err := c.sendHTML(ctx, chatID, chunk, r, threadID); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+
+		// Case 2: Parse error. Fallback to plain text.
+		if parseErrRe.MatchString(errStr) {
+			slog.Warn("HTML parse failed, falling back to plain text", "error", err)
+			tgMsg.ParseMode = ""
+			tgMsg.Text = stripHTML(htmlContent)
+			_, err = c.bot.SendMessage(ctx, tgMsg)
+
+			// If plain text is STILL too long, split it.
+			if err != nil && messageTooLongRe.MatchString(err.Error()) {
+				slog.Warn("Plain text fallback too long, splitting further", "len", len(tgMsg.Text))
+				innerChunks := chunkPlainText(tgMsg.Text, 4000) // use default safe limit
+				for i, chunk := range innerChunks {
+					// Note: we can't call sendHTML recursively with ParseMode already set to ""
+					// because sendHTML defaults to HTML. We'll send them manually.
+					msg := tu.Message(tu.ID(chatID), chunk)
+					msg.ReplyParameters = tgMsg.ReplyParameters
+					if i > 0 {
+						msg.ReplyParameters = nil
+					}
+					msg.MessageThreadID = tgMsg.MessageThreadID
+					_, err = c.bot.SendMessage(ctx, msg)
+					if err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+		}
+
+		// Case 3: Thread not found.
+		if tgMsg.MessageThreadID != 0 && threadNotFoundRe.MatchString(errStr) {
+			slog.Warn("thread not found, retrying without message_thread_id", "thread_id", tgMsg.MessageThreadID)
+			tgMsg.MessageThreadID = 0
+			_, err = c.bot.SendMessage(ctx, tgMsg)
+		}
 	}
 	return err
 }

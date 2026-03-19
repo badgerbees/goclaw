@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -24,6 +25,7 @@ type Channel struct {
 	bot              *telego.Bot
 	config           config.TelegramConfig
 	httpClient       *http.Client
+	transport        *http.Transport
 	pairingService   store.PairingStore
 	agentStore      store.AgentStore              // for agent key lookup (nil if not configured)
 	configPermStore store.ConfigPermissionStore   // for group file writer management (nil if not configured)
@@ -64,18 +66,20 @@ func New(cfg config.TelegramConfig, msgBus *bus.MessageBus, pairingSvc store.Pai
 		opts = append(opts, telego.WithAPIServer(cfg.APIServer))
 	}
 
-	httpClient := &http.Client{
-		Timeout: 30 * time.Second,
-	}
+	// Isolate transport for this account to prevent contention and allow sticky fallback.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
 
 	if cfg.Proxy != "" {
 		proxyURL, parseErr := url.Parse(cfg.Proxy)
 		if parseErr != nil {
 			return nil, fmt.Errorf("invalid proxy URL %q: %w", cfg.Proxy, parseErr)
 		}
-		transport := http.DefaultTransport.(*http.Transport).Clone()
 		transport.Proxy = http.ProxyURL(proxyURL)
-		httpClient.Transport = transport
+	}
+
+	httpClient := &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: transport,
 	}
 	opts = append(opts, telego.WithHTTPClient(httpClient))
 
@@ -102,6 +106,7 @@ func New(cfg config.TelegramConfig, msgBus *bus.MessageBus, pairingSvc store.Pai
 		bot:             bot,
 		config:          cfg,
 		httpClient:      httpClient,
+		transport:       transport,
 		pairingService:  pairingSvc,
 		agentStore:      agentStore,
 		configPermStore: configPermStore,
@@ -143,12 +148,15 @@ func (c *Channel) Start(ctx context.Context) error {
 	// Register bot menu commands with retry.
 	go func() {
 		commands := DefaultMenuCommands()
+		syncCtx, cancel := context.WithTimeout(pollCtx, probeOverallTimeout)
+		defer cancel()
+
 		for attempt := 1; attempt <= 3; attempt++ {
-			if err := c.SyncMenuCommands(pollCtx, commands); err != nil {
+			if err := c.SyncMenuCommands(syncCtx, commands); err != nil {
 				slog.Warn("failed to sync telegram menu commands", "error", err, "attempt", attempt)
 				if attempt < 3 {
 					select {
-					case <-pollCtx.Done():
+					case <-syncCtx.Done():
 						return
 					case <-time.After(time.Duration(attempt*5) * time.Second):
 					}
@@ -258,8 +266,34 @@ func (c *Channel) Stop(_ context.Context) error {
 			slog.Warn("telegram polling goroutine did not exit within timeout")
 		}
 	}
-
 	return nil
+}
+
+// enableIPv4Only forces the bot's transport to use IPv4 only for all future
+// requests. This is triggered when a transient dual-stack network error is
+// detected (e.g. IPv6 routing issues, network unreachable).
+func (c *Channel) enableIPv4Only() {
+	if c == nil || c.transport == nil {
+		return
+	}
+	// Note: We don't use a lock here as the transport is isolated per Channel
+	// and multiple calls to this are idempotent.
+	if c.transport.DialContext != nil {
+		return // already customized
+	}
+
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	c.transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		// Override "tcp" with "tcp4" to force IPv4
+		if network == "tcp" {
+			network = "tcp4"
+		}
+		return dialer.DialContext(ctx, network, addr)
+	}
+	slog.Info("telegram: enabled sticky IPv4 fallback for account", "bot", c.config.Token[:10]+"...")
 }
 
 // parseChatID converts a string chat ID to int64.

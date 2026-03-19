@@ -72,10 +72,10 @@ func (c *Channel) retrySend(ctx context.Context, name string, resetFn func(), fn
 			return err
 		}
 
-		// Diagnostics: if we hit a connectivity issue (potentially IPv6-related), 
-		// arm sticky IPv4 fallback for this account.
-		errMsg := err.Error()
-		if strings.Contains(errMsg, "unreachable") || strings.Contains(errMsg, "no such host") || strings.Contains(errMsg, "timeout") {
+		// If we hit a network-level connectivity issue (likely IPv6 routing),
+		// arm sticky IPv4 fallback. Only triggers on "unreachable" — not timeouts
+		// (which can be rate-limiting) or DNS errors (unrelated to IPv6).
+		if strings.Contains(err.Error(), "unreachable") {
 			c.enableIPv4Only()
 		}
 

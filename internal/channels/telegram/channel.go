@@ -26,6 +26,7 @@ type Channel struct {
 	config           config.TelegramConfig
 	httpClient       *http.Client
 	transport        *http.Transport
+	ipv4Once         sync.Once          // guards enableIPv4Only to prevent data race
 	pairingService   store.PairingStore
 	agentStore      store.AgentStore              // for agent key lookup (nil if not configured)
 	configPermStore store.ConfigPermissionStore   // for group file writer management (nil if not configured)
@@ -66,8 +67,10 @@ func New(cfg config.TelegramConfig, msgBus *bus.MessageBus, pairingSvc store.Pai
 		opts = append(opts, telego.WithAPIServer(cfg.APIServer))
 	}
 
-	// Isolate transport for this account to prevent contention and allow sticky fallback.
+	// Isolate transport per account: prevents cross-bot connection pool contention
+	// and allows per-account IPv4 fallback without affecting other bots.
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConnsPerHost = 64 // default 2 is too low for high-concurrency bots
 
 	if cfg.Proxy != "" {
 		proxyURL, parseErr := url.Parse(cfg.Proxy)
@@ -81,6 +84,12 @@ func New(cfg config.TelegramConfig, msgBus *bus.MessageBus, pairingSvc store.Pai
 		Timeout:   30 * time.Second,
 		Transport: transport,
 	}
+	// Apply ForceIPv4 at init if configured (explicit, predictable, no runtime heuristic).
+	if cfg.ForceIPv4 {
+		applyIPv4Dialer(transport)
+		slog.Info("telegram: forced IPv4 for account via config")
+	}
+
 	opts = append(opts, telego.WithHTTPClient(httpClient))
 
 	bot, err := telego.NewBot(cfg.Token, opts...)
@@ -269,31 +278,30 @@ func (c *Channel) Stop(_ context.Context) error {
 	return nil
 }
 
-// enableIPv4Only forces the bot's transport to use IPv4 only for all future
-// requests. This is triggered when a transient dual-stack network error is
-// detected (e.g. IPv6 routing issues, network unreachable).
-func (c *Channel) enableIPv4Only() {
-	if c == nil || c.transport == nil {
-		return
-	}
-	// Note: We don't use a lock here as the transport is isolated per Channel
-	// and multiple calls to this are idempotent.
-	if c.transport.DialContext != nil {
-		return // already customized
-	}
-
+// applyIPv4Dialer forces a transport to use IPv4 only by overriding DialContext.
+func applyIPv4Dialer(t *http.Transport) {
 	dialer := &net.Dialer{
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
 	}
-	c.transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		// Override "tcp" with "tcp4" to force IPv4
+	t.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		if network == "tcp" {
 			network = "tcp4"
 		}
 		return dialer.DialContext(ctx, network, addr)
 	}
-	slog.Info("telegram: enabled sticky IPv4 fallback for account", "bot", c.config.Token[:10]+"...")
+}
+
+// enableIPv4Only forces the bot's transport to use IPv4 only for all future
+// requests. Safe to call from multiple goroutines concurrently (uses sync.Once).
+func (c *Channel) enableIPv4Only() {
+	if c == nil || c.transport == nil {
+		return
+	}
+	c.ipv4Once.Do(func() {
+		applyIPv4Dialer(c.transport)
+		slog.Info("telegram: enabled sticky IPv4 fallback", "bot", c.bot.Username())
+	})
 }
 
 // parseChatID converts a string chat ID to int64.

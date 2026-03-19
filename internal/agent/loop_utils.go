@@ -82,3 +82,28 @@ func (l *Loop) ProviderName() string {
 	}
 	return l.provider.Name()
 }
+
+// normalizeToolCallIDs ensures all tool calls in a single response have unique IDs.
+// Some models (especially non-native OpenAI) may emit duplicate IDs which
+// trigger HTTP 400 when sent back in history.
+func normalizeToolCallIDs(calls []providers.ToolCall) []providers.ToolCall {
+	if len(calls) <= 1 {
+		return calls
+	}
+	used := make(map[string]bool)
+	for i := range calls {
+		id := calls[i].ID
+		if id == "" || used[id] {
+			// Generate unique fallback
+			for j := 0; ; j++ {
+				newID := fmt.Sprintf("call_auto_%d_%d", i, j)
+				if !used[newID] {
+					calls[i].ID = newID
+					break
+				}
+			}
+		}
+		used[calls[i].ID] = true
+	}
+	return calls
+}

@@ -366,12 +366,10 @@ func limitHistoryTurns(msgs []providers.Message, limit int) []providers.Message 
 // sanitizeHistory repairs tool_use/tool_result pairing in session history.
 // Matching TS session-transcript-repair.ts sanitizeToolUseResultPairing().
 //
-// Problems this fixes:
-//   - Orphaned tool messages at start of history (after truncation)
-//   - tool_result without matching tool_use in preceding assistant message
-//   - assistant with tool_calls but missing tool_results
-// sanitizeHistory repairs tool_use/tool_result pairing in session history.
-// Returns the cleaned messages and the number of messages that were dropped or synthesized.
+// Updates to achieve global tool call ID uniqueness (occurrence-aware):
+// - Some OpenAI-compatible APIs return 400 if history contains duplicate tool call IDs
+//   even across different assistant messages.
+// - This version rewrites redundant IDs using an occurrence count (e.g. call_22_1).
 func sanitizeHistory(msgs []providers.Message) ([]providers.Message, int) {
 	if len(msgs) == 0 {
 		return msgs, 0
@@ -392,46 +390,94 @@ func sanitizeHistory(msgs []providers.Message) ([]providers.Message, int) {
 		return nil, dropped
 	}
 
-	// 2. Walk through messages ensuring tool_result follows matching tool_use.
+	// 2. Walk through messages ensuring tool_result follows matching tool_use across transcript.
 	var result []providers.Message
+	// globalIDCounts tracks occurrences of raw IDs across the entire transcript.
+	globalIDCounts := make(map[string]int)
+
 	for i := start; i < len(msgs); i++ {
 		msg := msgs[i]
 
 		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
-			// Collect expected tool call IDs
-			expectedIDs := make(map[string]bool, len(msg.ToolCalls))
-			for _, tc := range msg.ToolCalls {
-				expectedIDs[tc.ID] = true
+			// DEEP COPY: msg.ToolCalls is a slice (pointer to shared array). To safely rewrite
+			// IDs for transcript-wide uniqueness WITHOUT mutating the original history in memory,
+			// we must create a new slice and copy the content.
+			oldCalls := msg.ToolCalls
+			msg.ToolCalls = make([]providers.ToolCall, len(oldCalls))
+			copy(msg.ToolCalls, oldCalls)
+
+			// Per-assistant message mapping of raw ID to its rewritten unique ID
+			rewrittenQueues := make(map[string][]string)
+			expectedIDs := make(map[string]bool)
+
+			// Rewrite assistant tool call IDs for transcript-wide uniqueness
+			for j := range msg.ToolCalls {
+				rawID := msg.ToolCalls[j].ID
+				if rawID == "" {
+					rawID = "call_auto"
+				}
+
+				rewrittenID := rawID
+				// Only rewrite IDs if raw content is absent (OpenAI-compatible path).
+				// Messages with RawAssistantContent (Anthropic) must keep original IDs
+				// to avoid breaking the match with their internal thinking blocks.
+				if msg.RawAssistantContent == nil {
+					count := globalIDCounts[rawID]
+					if count > 0 {
+						rewrittenID = fmt.Sprintf("%s_%d", rawID, count)
+					}
+					globalIDCounts[rawID]++
+				}
+
+				msg.ToolCalls[j].ID = rewrittenID
+				rewrittenQueues[rawID] = append(rewrittenQueues[rawID], rewrittenID)
+				expectedIDs[rewrittenID] = true
 			}
 
 			result = append(result, msg)
 
-			// Collect matching tool results that follow
+			// Collect matching tool results that immediately follow
 			for i+1 < len(msgs) && msgs[i+1].Role == "tool" {
 				i++
 				toolMsg := msgs[i]
-				if expectedIDs[toolMsg.ToolCallID] {
-					result = append(result, toolMsg)
-					delete(expectedIDs, toolMsg.ToolCallID)
+				rawID := toolMsg.ToolCallID
+
+				// Resolve which rewritten ID this tool result should consume based on encounter order
+				queue := rewrittenQueues[rawID]
+				if len(queue) > 0 {
+					rewrittenID := queue[0]
+					rewrittenQueues[rawID] = queue[1:]
+
+					if expectedIDs[rewrittenID] {
+						// toolMsg.ToolCallID is a string field (value copy), so modification is safe.
+						toolMsg.ToolCallID = rewrittenID
+						result = append(result, toolMsg)
+						delete(expectedIDs, rewrittenID)
+					} else {
+						slog.Debug("sanitizeHistory: unexpected tool result sequence", "raw_id", rawID)
+						dropped++
+					}
 				} else {
-					slog.Debug("sanitizeHistory: dropping mismatched tool result",
-						"tool_call_id", toolMsg.ToolCallID)
+					slog.Debug("sanitizeHistory: dropping orphaned/extra tool result", "raw_id", rawID)
 					dropped++
 				}
 			}
 
-			// Synthesize missing tool results
-			for id := range expectedIDs {
-				slog.Debug("sanitizeHistory: synthesizing missing tool result", "tool_call_id", id)
-				result = append(result, providers.Message{
-					Role:       "tool",
-					Content:    "[Tool result missing — session was compacted]",
-					ToolCallID: id,
-				})
-				dropped++
+			// Synthesize missing tool results to satisfy OpenAI pairing requirements.
+			for _, tc := range msg.ToolCalls {
+				if expectedIDs[tc.ID] {
+					slog.Debug("sanitizeHistory: synthesizing missing tool result", "tool_call_id", tc.ID)
+					result = append(result, providers.Message{
+						Role:       "tool",
+						Content:    "[Tool result missing — session was compacted]",
+						ToolCallID: tc.ID,
+					})
+					delete(expectedIDs, tc.ID)
+					dropped++
+				}
 			}
 		} else if msg.Role == "tool" {
-			// Orphaned tool message mid-history (no preceding assistant with matching tool_calls)
+			// Orphaned tool message mid-history
 			slog.Debug("sanitizeHistory: dropping orphaned tool message mid-history",
 				"tool_call_id", msg.ToolCallID)
 			dropped++

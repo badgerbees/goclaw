@@ -172,9 +172,9 @@ func (c *Channel) Start(ctx context.Context) error {
 					return
 				}
 				if update.Message != nil {
-					c.handleMessage(pollCtx, update)
+					go c.handleMessage(pollCtx, update)
 				} else if update.CallbackQuery != nil {
-					c.handleCallbackQuery(pollCtx, update.CallbackQuery)
+					go c.handleCallbackQuery(pollCtx, update.CallbackQuery)
 				} else {
 					// Log non-message updates for delivery diagnostics
 					updateType := "unknown"

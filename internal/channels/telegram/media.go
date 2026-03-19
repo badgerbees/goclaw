@@ -263,6 +263,12 @@ func (c *Channel) downloadMedia(ctx context.Context, fileID string, maxBytes int
 		return "", fmt.Errorf("download failed with status %d", resp.StatusCode)
 	}
 
+	// Use a progress-tracking reader to detect mid-stream stalls.
+	// Abort if no data is received for 60 seconds.
+	stallTimeout := 60 * time.Second
+	progressBody := newProgressReader(resp.Body, dlCtx, dlCancel, stallTimeout)
+	defer progressBody.Stop()
+
 	// Determine extension from file path
 	ext := filepath.Ext(file.FilePath)
 	if ext == "" {
@@ -275,8 +281,9 @@ func (c *Channel) downloadMedia(ctx context.Context, fileID string, maxBytes int
 	}
 	defer tmpFile.Close()
 
-	// Copy with size limit
-	written, err := io.Copy(tmpFile, io.LimitReader(resp.Body, maxBytes+1))
+	// Copy with size limit. Note: io.Copy handles the LimitReader correctly,
+	// and our progressBody will trigger cancellation if it stalls.
+	written, err := io.Copy(tmpFile, io.LimitReader(progressBody, maxBytes+1))
 	if err != nil {
 		os.Remove(tmpFile.Name())
 		return "", fmt.Errorf("save file: %w", err)
@@ -368,4 +375,41 @@ func lightweightMediaTags(msg *telego.Message) string {
 		return ""
 	}
 	return strings.Join(tags, "\n")
+}
+
+// progressReader is an io.ReadCloser that cancels a context if no data is received
+// within a specified timeout. Used to detect mid-stream stalls.
+type progressReader struct {
+	io.Reader
+	cancel context.CancelFunc
+	timer  *time.Timer
+	d      time.Duration
+}
+
+func newProgressReader(r io.Reader, ctx context.Context, cancel context.CancelFunc, d time.Duration) *progressReader {
+	pr := &progressReader{
+		Reader: r,
+		cancel: cancel,
+		d:      d,
+	}
+	pr.timer = time.AfterFunc(d, func() {
+		slog.Warn("telegram media: download stalled, aborting", "timeout", d)
+		cancel()
+	})
+	return pr
+}
+
+func (pr *progressReader) Read(p []byte) (n int, err error) {
+	n, err = pr.Reader.Read(p)
+	if n > 0 && err == nil {
+		// Data received, reset the stall timer
+		pr.timer.Reset(pr.d)
+	}
+	return n, err
+}
+
+func (pr *progressReader) Stop() {
+	if pr.timer != nil {
+		pr.timer.Stop()
+	}
 }

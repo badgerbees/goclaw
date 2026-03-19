@@ -83,27 +83,29 @@ func (l *Loop) ProviderName() string {
 	return l.provider.Name()
 }
 
-// normalizeToolCallIDs ensures all tool calls in a single response have unique IDs.
-// Some models (especially non-native OpenAI) may emit duplicate IDs which
-// trigger HTTP 400 when sent back in history.
-func normalizeToolCallIDs(calls []providers.ToolCall) []providers.ToolCall {
-	if len(calls) <= 1 {
+// uniquifyToolCallIDs ensures all tool call IDs are globally unique across the
+// transcript by appending a short run-ID prefix and iteration index.
+// Returns a new slice (does not mutate the input).
+//
+// Some OpenAI-compatible APIs (OpenRouter, vLLM, DeepSeek) return duplicate IDs
+// within a single response or reuse IDs from earlier turns, causing HTTP 400.
+// Using the run UUID guarantees cross-turn uniqueness without history rewriting.
+func uniquifyToolCallIDs(calls []providers.ToolCall, runID string, iteration int) []providers.ToolCall {
+	if len(calls) == 0 {
 		return calls
 	}
-	used := make(map[string]bool)
-	for i := range calls {
-		id := calls[i].ID
-		if id == "" || used[id] {
-			// Generate unique fallback
-			for j := 0; ; j++ {
-				newID := fmt.Sprintf("call_auto_%d_%d", i, j)
-				if !used[newID] {
-					calls[i].ID = newID
-					break
-				}
-			}
-		}
-		used[calls[i].ID] = true
+	short := runID
+	if len(short) > 8 {
+		short = short[:8]
 	}
-	return calls
+	out := make([]providers.ToolCall, len(calls))
+	copy(out, calls)
+	for i := range out {
+		if out[i].ID == "" {
+			out[i].ID = fmt.Sprintf("call_%s_%d_%d", short, iteration, i)
+		} else {
+			out[i].ID = fmt.Sprintf("%s_%s_%d_%d", out[i].ID, short, iteration, i)
+		}
+	}
+	return out
 }

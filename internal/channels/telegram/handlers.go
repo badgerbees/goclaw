@@ -107,7 +107,7 @@ func (c *Channel) handleMessage(ctx context.Context, update telego.Update) {
 		case "allowlist":
 			allowed := false
 			for _, a := range topicCfg.allowFrom {
-				if a == userID || a == senderID {
+				if a == userID || a == senderID || a == chatIDStr {
 					allowed = true
 					break
 				}

@@ -56,11 +56,11 @@ func (c *Channel) checkGroupPolicy(senderID, chatID string) bool {
 	case "disabled":
 		return false
 	case "allowlist":
-		if c.IsAllowed(senderID) {
+		if c.IsAllowed(senderID) || c.IsAllowed(chatID) {
 			return true
 		}
 		for _, allowed := range c.groupAllowList {
-			if senderID == allowed || strings.TrimPrefix(allowed, "@") == senderID {
+			if senderID == allowed || strings.TrimPrefix(allowed, "@") == senderID || chatID == allowed {
 				return true
 			}
 		}

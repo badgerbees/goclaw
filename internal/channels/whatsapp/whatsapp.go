@@ -286,7 +286,7 @@ func (c *Channel) checkGroupPolicy(senderID, chatID string) bool {
 	case "disabled":
 		return false
 	case "allowlist":
-		return c.IsAllowed(senderID)
+		return c.IsAllowed(senderID) || c.IsAllowed(chatID)
 	case "pairing":
 		if c.IsAllowed(senderID) {
 			return true

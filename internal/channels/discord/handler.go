@@ -44,7 +44,7 @@ func (c *Channel) handleMessage(_ *discordgo.Session, m *discordgo.MessageCreate
 			return
 		}
 	} else {
-		if !c.checkGroupPolicy(senderID, channelID) {
+		if !c.checkGroupPolicy(senderID, channelID, m.GuildID) {
 			slog.Debug("discord group message rejected by policy",
 				"user_id", senderID,
 				"username", senderName,
@@ -277,7 +277,7 @@ func (c *Channel) handleMessage(_ *discordgo.Session, m *discordgo.MessageCreate
 }
 
 // checkGroupPolicy evaluates the group policy for a sender, with pairing support.
-func (c *Channel) checkGroupPolicy(senderID, channelID string) bool {
+func (c *Channel) checkGroupPolicy(senderID, channelID, guildID string) bool {
 	groupPolicy := c.config.GroupPolicy
 	if groupPolicy == "" {
 		groupPolicy = "open"
@@ -287,7 +287,8 @@ func (c *Channel) checkGroupPolicy(senderID, channelID string) bool {
 	case "disabled":
 		return false
 	case "allowlist":
-		return c.IsAllowed(senderID)
+		// Allow if user, channel, or guild (server) is whitelisted.
+		return c.IsAllowed(senderID) || c.IsAllowed(channelID) || (guildID != "" && c.IsAllowed(guildID))
 	case "pairing":
 		if c.IsAllowed(senderID) {
 			return true

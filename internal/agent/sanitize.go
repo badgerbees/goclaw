@@ -407,3 +407,17 @@ func IsSilentReply(text string) bool {
 func isWordChar(r rune) bool {
 	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_'
 }
+
+// --- Message Directives ([[name:value]]) ---
+
+// messageDirectivePattern matches internal routing tags like [[reply_to:123]]
+// or [[voice]] that should be stripped before delivering to a user.
+var messageDirectivePattern = regexp.MustCompile(`(?s)\[\[.*?\]\]`)
+
+// StripMessageDirectives removes internal [[...]] tags from user-facing text.
+func StripMessageDirectives(content string) string {
+	if !strings.Contains(content, "[[") {
+		return content
+	}
+	return strings.TrimSpace(messageDirectivePattern.ReplaceAllString(content, ""))
+}

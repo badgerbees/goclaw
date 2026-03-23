@@ -1493,14 +1493,16 @@ func (l *Loop) runLoop(ctx context.Context, req RunRequest) (*RunResult, error) 
 		}
 	}
 
-	// If silent, return empty content so gateway suppresses delivery.
+	// 7. Metadata Stripping: Clean internal [[...]] tags for user-facing content
+	// (Session version is already saved in assistantMsg above)
+	finalContent = StripMessageDirectives(finalContent)
 	if isSilent {
 		slog.Info("agent loop: NO_REPLY detected, suppressing delivery",
 			"agent", l.id, "session", req.SessionKey)
 		finalContent = ""
 	}
 
-	// 5. Maybe summarize
+	// 8. Maybe summarize
 	l.maybeSummarize(ctx, req.SessionKey)
 
 	return &RunResult{

@@ -24,6 +24,8 @@ import (
 type Channel struct {
 	*channels.BaseChannel
 	bot              *telego.Bot
+	apiBase          string             // resolved Bot API URL (no trailing slash, scheme present)
+	isCustomAPI      bool               // true if configured with a custom API server (trust for SSRF)
 	config           config.TelegramConfig
 	httpClient       *http.Client
 	transport        *http.Transport
@@ -66,8 +68,11 @@ func (c *thinkingCancel) Cancel() {
 func New(cfg config.TelegramConfig, msgBus *bus.MessageBus, pairingSvc store.PairingStore, agentStore store.AgentStore, configPermStore store.ConfigPermissionStore, teamStore store.TeamStore, pendingStore store.PendingMessageStore) (*Channel, error) {
 	var opts []telego.BotOption
 
-	if cfg.APIServer != "" {
-		opts = append(opts, telego.WithAPIServer(cfg.APIServer))
+	// Centralized base URL resolution: ensures trailing slashes are trimmed
+	// and schemes (http/https) are present for both API calls and manual downloads.
+	apiBase, isCustom := resolveTelegramAPI(cfg.APIServer)
+	if isCustom {
+		opts = append(opts, telego.WithAPIServer(apiBase))
 	}
 
 	// Isolate transport per account: prevents cross-bot connection pool contention
@@ -116,6 +121,8 @@ func New(cfg config.TelegramConfig, msgBus *bus.MessageBus, pairingSvc store.Pai
 	return &Channel{
 		BaseChannel:     base,
 		bot:             bot,
+		apiBase:         apiBase,
+		isCustomAPI:     isCustom,
 		config:          cfg,
 		httpClient:      httpClient,
 		transport:       transport,
@@ -397,4 +404,19 @@ func resolveThreadIDForSend(threadID int) int {
 		return 0
 	}
 	return threadID
+}
+// resolveTelegramAPI returns the Telegram Bot API base URL, prioritizing the custom
+// APIServer config. It ensures trailing slashes are removed, schemes (http/https) are
+// present, and identifies if the server is a custom override (for SSRF trust).
+func resolveTelegramAPI(apiServer string) (base string, isCustom bool) {
+	trimmed := strings.TrimRight(apiServer, "/")
+	if trimmed == "" {
+		return "https://api.telegram.org", false
+	}
+
+	// Ensure scheme is present (defaults to http for local proxies if missing)
+	if !strings.Contains(trimmed, "://") {
+		trimmed = "http://" + trimmed
+	}
+	return trimmed, true
 }

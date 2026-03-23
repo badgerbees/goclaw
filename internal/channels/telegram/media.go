@@ -242,18 +242,11 @@ func (c *Channel) downloadMedia(ctx context.Context, fileID string, maxBytes int
 
 	// Download over HTTP: use custom API server if configured (non-local mode),
 	// otherwise the official Telegram API.
-	var downloadURL string
-	if c.config.APIServer != "" {
-		downloadURL = fmt.Sprintf("%s/file/bot%s/%s",
-			strings.TrimRight(c.config.APIServer, "/"), c.config.Token, file.FilePath)
-	} else {
-		downloadURL = fmt.Sprintf("https://api.telegram.org/file/bot%s/%s", c.config.Token, file.FilePath)
-	}
+	downloadURL := fmt.Sprintf("%s/file/bot%s/%s", c.apiBase, c.config.Token, file.FilePath)
 
 	// SSRF Protection: check the resolved URL before connecting.
 	// We skip the check IF the host is our explicitly configured (trusted) API server.
-	isTrusted := c.config.APIServer != "" && strings.HasPrefix(downloadURL, c.config.APIServer)
-	if !isTrusted {
+	if !c.isCustomAPI || !strings.HasPrefix(strings.ToLower(downloadURL), strings.ToLower(c.apiBase)) {
 		if err := tools.CheckSSRF(downloadURL); err != nil {
 			return "", fmt.Errorf("SSRF protection: %w", err)
 		}

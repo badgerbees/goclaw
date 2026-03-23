@@ -16,7 +16,8 @@ import (
 const (
 	DefaultMemoryFlushPrompt = "Pre-compaction memory flush. " +
 		"Store durable memories now (use memory/YYYY-MM-DD.md; create memory/ if needed). " +
-		"IMPORTANT: If the file already exists, APPEND new content only and do not overwrite existing entries. " +
+		"Do NOT create timestamped variant files (e.g., YYYY-MM-DD-HHMM.md); always use the canonical YYYY-MM-DD.md filename. " +
+		"IMPORTANT: If the file already exists, APPEND new content only — do not overwrite existing entries. " +
 		"If nothing to store, reply with NO_REPLY."
 
 	DefaultMemoryFlushSystemPrompt = "Pre-compaction memory flush turn. " +

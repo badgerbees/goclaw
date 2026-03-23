@@ -21,8 +21,11 @@ func (c *Channel) handleAppMention(ev *slackevents.AppMentionEvent) {
 		return
 	}
 
-	// Dedup: app_mention may arrive alongside a message event
-	dedupKey := ev.Channel + ":" + ev.TimeStamp
+	// Dedup: app_mention may arrive alongside a message event. Slack delivers both in 
+	// no guaranteed order. We use a :mention suffix so that app_mention is not blocked 
+	// by a generic message event that might have arrived first and triggered requireMention 
+	// gating. Duplicate triggers are safely coalesced by the downstream debouncer.
+	dedupKey := ev.Channel + ":" + ev.TimeStamp + ":mention"
 	if _, loaded := c.dedup.LoadOrStore(dedupKey, time.Now()); loaded {
 		return
 	}

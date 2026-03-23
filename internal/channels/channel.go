@@ -111,11 +111,11 @@ type StreamingChannel interface {
 	// firstStream: true for the first stream in a run (may become reasoning lane —
 	// must use message transport so it persists as a real message). false for
 	// subsequent streams (answer lane — may use draft transport for stealth preview).
-	CreateStream(ctx context.Context, chatID string, runID string, firstStream bool) (ChannelStream, error)
+	CreateStream(ctx context.Context, chatID string, firstStream bool) (ChannelStream, error)
 	// FinalizeStream is called after the stream has been stopped to hand off
 	// the stream's messageID (if any) back to the channel's placeholder map
 	// so that Send() can edit it with the final formatted response.
-	FinalizeStream(ctx context.Context, chatID string, runID string, stream ChannelStream)
+	FinalizeStream(ctx context.Context, chatID string, stream ChannelStream)
 	// ReasoningStreamEnabled returns whether reasoning should be shown as a
 	// separate message. Default: true. Channels that don't support lanes can
 	// return false to skip reasoning routing.

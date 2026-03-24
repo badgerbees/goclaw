@@ -410,14 +410,22 @@ func isWordChar(r rune) bool {
 
 // --- Message Directives ([[name:value]]) ---
 
-// messageDirectivePattern matches internal routing tags like [[reply_to:123]]
-// or [[voice]] that should be stripped before delivering to a user.
-var messageDirectivePattern = regexp.MustCompile(`(?s)\[\[.*?\]\]`)
+// messageDirectivePattern matches structured routing tags: [[word]] or [[word:value]].
+// Single-line only (no (?s) dotall). Does NOT match arbitrary [[...]] content.
+var messageDirectivePattern = regexp.MustCompile(`\[\[\w+(?::[^\]\n]+)?\]\]`)
 
-// StripMessageDirectives removes internal [[...]] tags from user-facing text.
+// StripMessageDirectives removes internal [[...]] routing tags from user-facing text,
+// preserving [[tts...]] tags needed by the TTS auto-apply pipeline.
 func StripMessageDirectives(content string) string {
 	if !strings.Contains(content, "[[") {
 		return content
 	}
-	return strings.TrimSpace(messageDirectivePattern.ReplaceAllString(content, ""))
+	result := messageDirectivePattern.ReplaceAllStringFunc(content, func(match string) string {
+		inner := match[2 : len(match)-2] // strip [[ and ]]
+		if strings.HasPrefix(inner, "tts") {
+			return match // preserve for TTS AutoTagged mode
+		}
+		return ""
+	})
+	return strings.TrimSpace(result)
 }

@@ -44,7 +44,7 @@ func TestTaskLocalKeyMetadata(t *testing.T) {
 			},
 		}
 
-		got := taskLocalKeyMetadata(task)
+		got := TaskLocalKeyMetadata(task)
 		if got == nil {
 			t.Fatal("expected metadata to be populated")
 		}
@@ -54,7 +54,7 @@ func TestTaskLocalKeyMetadata(t *testing.T) {
 	})
 
 	t.Run("omits local key when missing", func(t *testing.T) {
-		if got := taskLocalKeyMetadata(&store.TeamTaskData{}); got != nil {
+		if got := TaskLocalKeyMetadata(&store.TeamTaskData{}); got != nil {
 			t.Fatalf("expected metadata to be nil, got %#v", got)
 		}
 	})

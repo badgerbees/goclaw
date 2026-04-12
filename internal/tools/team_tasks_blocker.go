@@ -77,7 +77,7 @@ func (t *TeamTasksTool) handleBlockerComment(
 				Channel:  task.Channel,
 				SenderID: "system:escalation",
 				ChatID:   task.ChatID,
-				Metadata: taskLocalKeyMetadata(task),
+				Metadata: TaskLocalKeyMetadata(task),
 				Content:  escalationMsg,
 				UserID:   store.UserIDFromContext(ctx),
 				PeerKind: blockerPeerKind,

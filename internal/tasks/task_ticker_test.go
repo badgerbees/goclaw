@@ -491,27 +491,3 @@ func TestFollowupOutboundMessage_OmitsLocalKeyWhenMissing(t *testing.T) {
 		t.Fatalf("expected metadata to be nil, got %#v", got.Metadata)
 	}
 }
-
-func TestTaskLocalKeyMetadata(t *testing.T) {
-	t.Run("uses local key", func(t *testing.T) {
-		task := &store.TeamTaskData{
-			Metadata: map[string]any{
-				tools.TaskMetaLocalKey: "-100123456:topic:47",
-			},
-		}
-
-		got := taskLocalKeyMetadata(task)
-		if got == nil {
-			t.Fatal("expected metadata to be populated")
-		}
-		if got[tools.TaskMetaLocalKey] != "-100123456:topic:47" {
-			t.Fatalf("local_key = %q, want %q", got[tools.TaskMetaLocalKey], "-100123456:topic:47")
-		}
-	})
-
-	t.Run("omits local key when missing", func(t *testing.T) {
-		if got := taskLocalKeyMetadata(&store.TeamTaskData{}); got != nil {
-			t.Fatalf("expected metadata to be nil, got %#v", got)
-		}
-	})
-}

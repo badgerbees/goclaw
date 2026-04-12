@@ -27,11 +27,12 @@ func reviewOutboundMessage(task *store.TeamTaskData, content string) bus.Outboun
 		ChatID:  task.ChatID,
 		Content: content,
 	}
-	message.Metadata = taskLocalKeyMetadata(task)
+	message.Metadata = TaskLocalKeyMetadata(task)
 	return message
 }
 
-func taskLocalKeyMetadata(task *store.TeamTaskData) map[string]string {
+// TaskLocalKeyMetadata extracts local_key from task metadata for Telegram forum topic routing.
+func TaskLocalKeyMetadata(task *store.TeamTaskData) map[string]string {
 	if task == nil || task.Metadata == nil {
 		return nil
 	}

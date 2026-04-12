@@ -18,11 +18,11 @@ import (
 )
 
 const (
-	defaultRecoveryInterval    = 5 * time.Minute
-	defaultStaleThreshold      = 2 * time.Hour
-	defaultInReviewThreshold   = 4 * time.Hour
-	followupCooldown           = 5 * time.Minute
-	defaultFollowupInterval    = 30 * time.Minute
+	defaultRecoveryInterval  = 5 * time.Minute
+	defaultStaleThreshold    = 2 * time.Hour
+	defaultInReviewThreshold = 4 * time.Hour
+	followupCooldown         = 5 * time.Minute
+	defaultFollowupInterval  = 30 * time.Minute
 )
 
 // TaskTicker periodically recovers stale tasks and re-dispatches pending work.
@@ -242,7 +242,7 @@ func (t *TaskTicker) notifyLeaders(ctx context.Context, tasks []store.RecoveredT
 			fullTask = task
 			if fullTask != nil && fullTask.Metadata != nil {
 				if pk, ok := fullTask.Metadata["peer_kind"].(string); ok {
-				peerKind = pk
+					peerKind = pk
 				}
 			}
 		}
@@ -251,7 +251,7 @@ func (t *TaskTicker) notifyLeaders(ctx context.Context, tasks []store.RecoveredT
 			Channel:  channel,
 			SenderID: "ticker:system",
 			ChatID:   chatID,
-			Metadata: taskLocalKeyMetadata(fullTask),
+			Metadata: tools.TaskLocalKeyMetadata(fullTask),
 			AgentID:  lead.AgentKey,
 			UserID:   team.CreatedBy,
 			PeerKind: peerKind,
@@ -377,18 +377,8 @@ func followupOutboundMessage(task *store.TeamTaskData, content string) bus.Outbo
 		ChatID:  task.FollowupChatID,
 		Content: content,
 	}
-	message.Metadata = taskLocalKeyMetadata(task)
+	message.Metadata = tools.TaskLocalKeyMetadata(task)
 	return message
-}
-
-func taskLocalKeyMetadata(task *store.TeamTaskData) map[string]string {
-	if task == nil || task.Metadata == nil {
-		return nil
-	}
-	if localKey, ok := task.Metadata[tools.TaskMetaLocalKey].(string); ok && localKey != "" {
-		return map[string]string{tools.TaskMetaLocalKey: localKey}
-	}
-	return nil
 }
 
 // followupInterval parses the team's followup_interval_minutes setting.

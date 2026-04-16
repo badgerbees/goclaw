@@ -72,12 +72,24 @@ func (h *TenantBackupHandler) resolveTenant(w http.ResponseWriter, r *http.Reque
 }
 
 // resolveRestoreTarget resolves the restore target for the requested mode.
-// New mode uses a slug-only target; other modes resolve an existing tenant.
+// New mode uses a slug-only target (the new tenant's slug); other modes resolve an existing tenant.
+// tenant_id is rejected for mode=new because the new tenant's UUID is generated server-side.
 func (h *TenantBackupHandler) resolveRestoreTarget(w http.ResponseWriter, r *http.Request, mode string) (uuid.UUID, string, bool) {
 	if mode == "new" {
-		slug := strings.TrimSpace(r.URL.Query().Get("tenant_slug"))
+		q := r.URL.Query()
+		slug := strings.TrimSpace(q.Get("tenant_slug"))
+		tid := strings.TrimSpace(q.Get("tenant_id"))
+		locale := extractLocale(r)
+
+		// mode=new generates a fresh tenant UUID server-side; any caller-supplied
+		// tenant_id is rejected regardless of whether tenant_slug is also present,
+		// matching the CLI contract and preventing ambiguous "which one wins" semantics.
+		if tid != "" {
+			writeError(w, http.StatusBadRequest, protocol.ErrInvalidRequest,
+				i18n.T(locale, i18n.MsgRestoreNewModeRejectsTenantID))
+			return uuid.Nil, "", false
+		}
 		if slug == "" {
-			locale := extractLocale(r)
 			writeError(w, http.StatusBadRequest, protocol.ErrInvalidRequest,
 				i18n.T(locale, i18n.MsgRequired, "tenant_slug"))
 			return uuid.Nil, "", false

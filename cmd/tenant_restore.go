@@ -29,9 +29,14 @@ func tenantRestoreCmd() *cobra.Command {
 		Long: `Restores a tenant from a .tar.gz archive produced by 'goclaw tenant-backup'.
 
 Modes:
-  upsert  (default) — INSERT … ON CONFLICT DO NOTHING. Non-destructive.
-  replace           — Delete existing tenant data first, then INSERT. Requires --force.
-	new               — Create a new tenant and import data under --new-tenant-slug.`,
+  upsert   (default) — INSERT ... ON CONFLICT DO NOTHING. Non-destructive.
+                       Requires --tenant or --tenant-id.
+  replace            — Wipes tenant-scoped data (keeps tenant metadata), then INSERT.
+                       Requires --tenant or --tenant-id AND --force.
+  new                — Creates a new tenant from archive metadata.
+                       Requires --new-tenant-slug. Archive's tenant_id is remapped
+                       to the new tenant. Users, API keys, LLM providers, and all
+                       other tenant-scoped data are cloned from the archive.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			archivePath := args[0]
@@ -45,6 +50,14 @@ Modes:
 			if _, err := os.Stat(archivePath); err != nil {
 				return fmt.Errorf("archive not found: %s", archivePath)
 			}
+
+			// Validate flag wiring before touching the filesystem state (--force check).
+			// Catches invalid combinations like mode=new with --tenant before the user
+			// sees destructive-operation prompts.
+			if err := validateTenantRestoreFlags(mode, tenantSlug, tenantID, newTenantSlug); err != nil {
+				return err
+			}
+
 			if mode == "replace" && !dryRun && !force {
 				fmt.Fprintln(os.Stderr, "ERROR: --force is required for replace mode (destructive operation).")
 				os.Exit(1)
@@ -64,15 +77,11 @@ Modes:
 
 			switch mode {
 			case "new":
-				targetSlug := strings.TrimSpace(newTenantSlug)
-				if targetSlug == "" {
-					return fmt.Errorf("--new-tenant-slug is required for mode new")
-				}
 				db, restoreErr = openTenantBackupDB(cfg)
 				if restoreErr != nil {
 					return restoreErr
 				}
-				slug = targetSlug
+				slug = strings.TrimSpace(newTenantSlug)
 			default:
 				tid, slug, db, restoreErr = resolveTenantForCLI(cmd, cfg, tenantID, tenantSlug)
 				if restoreErr != nil {
@@ -127,11 +136,35 @@ Modes:
 		},
 	}
 
-	cmd.Flags().StringVar(&tenantSlug, "tenant", "", "existing tenant slug (upsert/replace)")
-	cmd.Flags().StringVar(&tenantID, "tenant-id", "", "existing tenant UUID (alternative to --tenant)")
-	cmd.Flags().StringVar(&newTenantSlug, "new-tenant-slug", "", "target slug when restoring in new mode")
+	cmd.Flags().StringVar(&tenantSlug, "tenant", "", "target tenant slug (for mode=upsert|replace)")
+	cmd.Flags().StringVar(&tenantID, "tenant-id", "", "target tenant UUID (for mode=upsert|replace, alternative to --tenant)")
+	cmd.Flags().StringVar(&newTenantSlug, "new-tenant-slug", "", "slug for the new tenant (required for mode=new)")
 	cmd.Flags().StringVar(&mode, "mode", "upsert", "restore mode: upsert, replace, new")
 	cmd.Flags().BoolVar(&force, "force", false, "required for replace mode")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "inspect archive without making changes")
 	return cmd
+}
+
+// validateTenantRestoreFlags enforces flag semantics per restore mode.
+// Called before opening the database so invalid combinations fail fast.
+func validateTenantRestoreFlags(mode, tenant, tenantID, newTenantSlug string) error {
+	switch mode {
+	case "new":
+		if strings.TrimSpace(newTenantSlug) == "" {
+			return fmt.Errorf("--new-tenant-slug is required for mode=new (choose a unique slug for the new tenant)")
+		}
+		if tenant != "" || tenantID != "" {
+			return fmt.Errorf("mode=new does not accept --tenant or --tenant-id; use --new-tenant-slug to name the new tenant")
+		}
+	case "upsert", "replace":
+		if tenant == "" && tenantID == "" {
+			return fmt.Errorf("--tenant <slug> or --tenant-id <uuid> is required for mode=%s", mode)
+		}
+		if strings.TrimSpace(newTenantSlug) != "" {
+			fmt.Fprintf(os.Stderr, "warning: --new-tenant-slug is ignored for mode=%s\n", mode)
+		}
+	default:
+		return fmt.Errorf("invalid --mode=%q (allowed: upsert, replace, new)", mode)
+	}
+	return nil
 }

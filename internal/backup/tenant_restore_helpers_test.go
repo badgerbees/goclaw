@@ -33,11 +33,17 @@ func TestShouldRestoreTable(t *testing.T) {
 	if shouldRestoreTable("new", TableDef{Name: "tenants"}) {
 		t.Fatal("shouldRestoreTable(new, tenants) = true, want false")
 	}
+	if shouldRestoreTable("replace", TableDef{Name: "tenants"}) {
+		t.Fatal("shouldRestoreTable(replace, tenants) = true, want false")
+	}
 	if !shouldRestoreTable("upsert", TableDef{Name: "tenants"}) {
 		t.Fatal("shouldRestoreTable(upsert, tenants) = false, want true")
 	}
 	if !shouldRestoreTable("new", TableDef{Name: "agents"}) {
 		t.Fatal("shouldRestoreTable(new, agents) = false, want true")
+	}
+	if !shouldRestoreTable("replace", TableDef{Name: "agents"}) {
+		t.Fatal("shouldRestoreTable(replace, agents) = false, want true")
 	}
 }
 

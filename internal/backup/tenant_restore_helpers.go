@@ -98,12 +98,25 @@ func ensureTenantSlugAvailable(ctx context.Context, slug string, lookup func(con
 	}
 }
 
-// deleteTenantData removes all tenant rows in reverse tier order (children before parents).
+// DeleteTenantDataForTest exposes deleteTenantData to integration tests in
+// external packages. Production callers must use the internal restore path.
+func DeleteTenantDataForTest(ctx context.Context, db *sql.DB, tenantID uuid.UUID, tables []TableDef) error {
+	return deleteTenantData(ctx, db, tenantID, tables)
+}
+
+// deleteTenantData removes all tenant-scoped rows in reverse tier order (children before parents).
 // Tables without direct tenant_id (e.g. vault_links) are skipped — handled by FK cascade.
+// The tenants row itself is preserved: diagnostic tables (traces, activity_logs, usage_snapshots,
+// spans, embedding_cache, pairing_requests, paired_devices, channel_pending_messages, cron_run_logs)
+// reference tenants(id) without ON DELETE CASCADE, so removing the tenants row would fail under
+// FK restrict. Replace mode keeps tenant metadata in place and only wipes backed-up child data.
 func deleteTenantData(ctx context.Context, db *sql.DB, tenantID uuid.UUID, tables []TableDef) error {
 	for i := len(tables) - 1; i >= 0; i-- {
 		t := tables[i]
 		if t.ParentJoin != "" {
+			continue
+		}
+		if t.Name == "tenants" {
 			continue
 		}
 		q, err := t.deleteQuery()
@@ -164,9 +177,15 @@ func createNewTenant(ctx context.Context, db *sql.DB, source *tenantRestoreRow, 
 }
 
 // shouldRestoreTable reports whether a table from the archive should be restored for the given mode.
-// New mode recreates the tenants row separately, so the archived copy is skipped.
+//   - mode=new:     tenants row is created fresh from archive metadata via createNewTenant,
+//                   so the archived tenants copy is skipped to avoid duplicate INSERT.
+//   - mode=replace: tenants row is preserved in place (deleteTenantData skips it to respect
+//                   FK from excluded diagnostic tables), so the archived copy is NOT re-applied
+//                   either — existing tenant metadata (name/status/settings) remains untouched.
+//   - mode=upsert:  all tables including tenants are restored via ON CONFLICT DO NOTHING
+//                   (NO-OP if the row already exists).
 func shouldRestoreTable(mode string, table TableDef) bool {
-	if mode == "new" && table.Name == "tenants" {
+	if table.Name == "tenants" && (mode == "new" || mode == "replace") {
 		return false
 	}
 	return true

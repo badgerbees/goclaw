@@ -25,7 +25,18 @@ type TenantRestoreOptions struct {
 	TenantSlug    string    // target tenant slug; required for mode "new"
 	DataDir       string
 	WorkspacePath string
-	// Mode: "upsert" (default), "new" (create new tenant), "replace" (delete + insert)
+	// Mode selects restore strategy:
+	//   - "upsert"  (default): INSERT ... ON CONFLICT DO NOTHING. Non-destructive.
+	//                          Tenant metadata (name/status/settings) is NOT updated
+	//                          if the tenants row already exists.
+	//   - "replace": DELETE all tenant-scoped data except the tenants row (FK-safe
+	//                with respect to excluded diagnostic tables), then INSERT from
+	//                archive. Metadata on the tenants row is preserved in place.
+	//   - "new":     Create a new tenant from archive metadata (name/status/settings)
+	//                with the provided TenantSlug. All tenant-scoped rows are cloned
+	//                with tenant_id remapped to the new tenant. This includes
+	//                tenant_users, api_keys, llm_providers, config_secrets, etc. —
+	//                effectively a tenant clone under a new slug.
 	Mode       string
 	Force      bool
 	DryRun     bool

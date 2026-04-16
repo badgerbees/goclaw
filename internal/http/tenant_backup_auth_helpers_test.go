@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -118,5 +119,59 @@ func TestResolveRestoreTargetNewModeUsesSlug(t *testing.T) {
 	}
 	if slug != "fresh-slug" {
 		t.Fatalf("resolveRestoreTarget() slug = %q, want %q", slug, "fresh-slug")
+	}
+}
+
+func TestResolveRestoreTargetNewModeRejectsTenantID(t *testing.T) {
+	handler := &TenantBackupHandler{tenants: fakeTenantStore{}}
+	req := httptest.NewRequest(http.MethodPost,
+		"/v1/tenant/restore?mode=new&tenant_id="+uuid.New().String(), nil)
+	rec := httptest.NewRecorder()
+
+	_, _, ok := handler.resolveRestoreTarget(rec, req, "new")
+	if ok {
+		t.Fatal("resolveRestoreTarget() returned ok=true, want false")
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "tenant_slug") {
+		t.Fatalf("error body should mention tenant_slug; got %q", body)
+	}
+}
+
+func TestResolveRestoreTargetNewModeRequiresSlug(t *testing.T) {
+	handler := &TenantBackupHandler{tenants: fakeTenantStore{}}
+	req := httptest.NewRequest(http.MethodPost, "/v1/tenant/restore?mode=new", nil)
+	rec := httptest.NewRecorder()
+
+	_, _, ok := handler.resolveRestoreTarget(rec, req, "new")
+	if ok {
+		t.Fatal("resolveRestoreTarget() returned ok=true, want false")
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+// TestResolveRestoreTargetNewModeRejectsTenantIDWithSlug verifies that
+// mode=new rejects tenant_id even when tenant_slug is also provided — matches
+// CLI contract, prevents ambiguous "which one wins" semantics.
+func TestResolveRestoreTargetNewModeRejectsTenantIDWithSlug(t *testing.T) {
+	handler := &TenantBackupHandler{tenants: fakeTenantStore{}}
+	req := httptest.NewRequest(http.MethodPost,
+		"/v1/tenant/restore?mode=new&tenant_slug=fresh&tenant_id="+uuid.New().String(), nil)
+	rec := httptest.NewRecorder()
+
+	_, _, ok := handler.resolveRestoreTarget(rec, req, "new")
+	if ok {
+		t.Fatal("resolveRestoreTarget() returned ok=true, want false")
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	if !strings.Contains(rec.Body.String(), "tenant_slug") {
+		t.Fatalf("error body should reference the expected param; got %q", rec.Body.String())
 	}
 }

@@ -117,10 +117,10 @@
       "start": "Khôi phục Tenant",
       "confirmTitle": "Xác nhận khôi phục Tenant",
       "confirmDesc": "Thao tác này sẽ thay đổi dữ liệu của tenant được chọn. Bạn có chắc chắn?",
+      "confirmDescNew": "Thao tác này sẽ tạo một tenant mới và khôi phục bản sao lưu vào đó. Bạn có chắc chắn không?",
       "running": "Đang khôi phục tenant...",
       "complete": "Khôi phục tenant hoàn tất",
       "tablesRestored": "Bảng đã khôi phục",
-      "confirmDescNew": "Thao tác này sẽ tạo một tenant mới và khôi phục bản sao lưu vào đó. Bạn có chắc chắn không?",
       "filesExtracted": "Tệp đã giải nén",
       "dryRunNote": "Chạy thử — không có thay đổi",
       "newRestore": "Khôi phục mới"

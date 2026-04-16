@@ -88,12 +88,13 @@ func TestBridgeTool_Execute_RevokeAgentGrant_ReturnsError(t *testing.T) {
 	}
 }
 
-// TestBridgeTool_Execute_RevokeUserGrant_ReturnsError verifies that after revoking
-// a user grant, BridgeTool.Execute returns an error.
+// TestBridgeTool_Execute_RevokeUserGrant_DoesNotRevokeAgentAccess verifies that
+// revoking the user grant alone does not remove agent access.
 //
-// This test verifies that BridgeTool.Execute rechecks grants and returns a
-// grant-revoked error after the user grant is removed.
-func TestBridgeTool_Execute_RevokeUserGrant_ReturnsError(t *testing.T) {
+// BridgeTool.Execute should still reach the client path because the agent grant
+// remains active. In this harness we keep the client pointer nil, so the
+// expected terminal error is the missing-client branch rather than grant revoked.
+func TestBridgeTool_Execute_RevokeUserGrant_DoesNotRevokeAgentAccess(t *testing.T) {
 	db := testDB(t)
 	tenantID, agentID := seedTenantAgent(t, db)
 	serverID := seedMCPServer(t, db, tenantID)
@@ -149,12 +150,16 @@ func TestBridgeTool_Execute_RevokeUserGrant_ReturnsError(t *testing.T) {
 	// Execute the tool after user revoke.
 	result := tool.Execute(ctx, map[string]any{"arg": "value"})
 
-	// BridgeTool.Execute should recheck grants and return a grant-revoked error.
+	// User revocation alone should not trip the grant-revoked path because the
+	// agent grant is still active.
 	if !result.IsError {
 		t.Error("expected error result after user grant revoked")
 	}
-	if result.IsError && !containsGrantRevoked(result.ForLLM) {
-		t.Errorf("expected 'grant revoked' error, got: %s", result.ForLLM)
+	if containsGrantRevoked(result.ForLLM) {
+		t.Errorf("expected client-path error, got grant-revoked result: %s", result.ForLLM)
+	}
+	if result.IsError && !contains(result.ForLLM, "no active client") {
+		t.Errorf("expected no-active-client error, got: %s", result.ForLLM)
 	}
 }
 

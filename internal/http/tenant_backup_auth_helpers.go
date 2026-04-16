@@ -1,7 +1,11 @@
 package http
 
 import (
+	"database/sql"
+	"errors"
+	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -23,7 +27,23 @@ func (h *TenantBackupHandler) resolveTenant(w http.ResponseWriter, r *http.Reque
 				i18n.T(locale, i18n.MsgInvalidRequest, "tenant_id"))
 			return uuid.Nil, "", false
 		}
-		return id, q.Get("tenant_slug"), true
+		if h.tenants == nil {
+			writeError(w, http.StatusInternalServerError, protocol.ErrInternal, "tenant store unavailable")
+			return uuid.Nil, "", false
+		}
+		tenant, err := h.tenants.GetTenant(r.Context(), id)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusNotFound, protocol.ErrNotFound,
+					i18n.T(locale, i18n.MsgNotFound, "tenant", raw))
+				return uuid.Nil, "", false
+			}
+			slog.Error("tenant.resolve_by_id_failed", "tenant_id", raw, "error", err)
+			writeError(w, http.StatusInternalServerError, protocol.ErrInternal,
+				i18n.T(locale, i18n.MsgInternalError, "tenant lookup failed"))
+			return uuid.Nil, "", false
+		}
+		return tenant.ID, tenant.Slug, true
 	}
 
 	if slug := q.Get("tenant_slug"); slug != "" {
@@ -33,8 +53,14 @@ func (h *TenantBackupHandler) resolveTenant(w http.ResponseWriter, r *http.Reque
 		}
 		tenant, err := h.tenants.GetTenantBySlug(r.Context(), slug)
 		if err != nil {
-			writeError(w, http.StatusNotFound, protocol.ErrNotFound,
-				i18n.T(locale, i18n.MsgNotFound, "tenant", slug))
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusNotFound, protocol.ErrNotFound,
+					i18n.T(locale, i18n.MsgNotFound, "tenant", slug))
+				return uuid.Nil, "", false
+			}
+			slog.Error("tenant.resolve_by_slug_failed", "tenant_slug", slug, "error", err)
+			writeError(w, http.StatusInternalServerError, protocol.ErrInternal,
+				i18n.T(locale, i18n.MsgInternalError, "tenant lookup failed"))
 			return uuid.Nil, "", false
 		}
 		return tenant.ID, tenant.Slug, true
@@ -43,6 +69,23 @@ func (h *TenantBackupHandler) resolveTenant(w http.ResponseWriter, r *http.Reque
 	writeError(w, http.StatusBadRequest, protocol.ErrInvalidRequest,
 		i18n.T(locale, i18n.MsgRequired, "tenant_id or tenant_slug"))
 	return uuid.Nil, "", false
+}
+
+// resolveRestoreTarget resolves the restore target for the requested mode.
+// New mode uses a slug-only target; other modes resolve an existing tenant.
+func (h *TenantBackupHandler) resolveRestoreTarget(w http.ResponseWriter, r *http.Request, mode string) (uuid.UUID, string, bool) {
+	if mode == "new" {
+		slug := strings.TrimSpace(r.URL.Query().Get("tenant_slug"))
+		if slug == "" {
+			locale := extractLocale(r)
+			writeError(w, http.StatusBadRequest, protocol.ErrInvalidRequest,
+				i18n.T(locale, i18n.MsgRequired, "tenant_slug"))
+			return uuid.Nil, "", false
+		}
+		return uuid.Nil, slug, true
+	}
+
+	return h.resolveTenant(w, r)
 }
 
 // authorised returns true if the user is the system owner or a tenant admin/owner.

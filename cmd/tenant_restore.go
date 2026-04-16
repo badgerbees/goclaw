@@ -1,9 +1,12 @@
 package cmd
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
+	"strings"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/nextlevelbuilder/goclaw/internal/backup"
@@ -12,11 +15,12 @@ import (
 
 func tenantRestoreCmd() *cobra.Command {
 	var (
-		tenantSlug string
-		tenantID   string
-		mode       string
-		force      bool
-		dryRun     bool
+		tenantSlug    string
+		tenantID      string
+		newTenantSlug string
+		mode          string
+		force         bool
+		dryRun        bool
 	)
 
 	cmd := &cobra.Command{
@@ -27,7 +31,7 @@ func tenantRestoreCmd() *cobra.Command {
 Modes:
   upsert  (default) — INSERT … ON CONFLICT DO NOTHING. Non-destructive.
   replace           — Delete existing tenant data first, then INSERT. Requires --force.
-  new               — Create a new tenant and import data under the new tenant ID.`,
+	new               — Create a new tenant and import data under --new-tenant-slug.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			archivePath := args[0]
@@ -51,14 +55,31 @@ Modes:
 				return fmt.Errorf("load config: %w", err)
 			}
 
-			// For "new" mode the tenant may not exist yet — allow lookup failure.
-			tid, slug, db, lookupErr := resolveTenantForCLI(cmd, cfg, tenantID, tenantSlug)
-			if lookupErr != nil && mode != "new" {
-				return lookupErr
+			var (
+				tid  = uuid.Nil
+				slug string
+				db   *sql.DB
+			)
+			var restoreErr error
+
+			switch mode {
+			case "new":
+				targetSlug := strings.TrimSpace(newTenantSlug)
+				if targetSlug == "" {
+					return fmt.Errorf("--new-tenant-slug is required for mode new")
+				}
+				db, restoreErr = openTenantBackupDB(cfg)
+				if restoreErr != nil {
+					return restoreErr
+				}
+				slug = targetSlug
+			default:
+				tid, slug, db, restoreErr = resolveTenantForCLI(cmd, cfg, tenantID, tenantSlug)
+				if restoreErr != nil {
+					return restoreErr
+				}
 			}
-			if db != nil {
-				defer db.Close()
-			}
+			defer db.Close()
 
 			dataDir := config.TenantDataDir(cfg.ResolvedDataDir(), tid, slug)
 			wsDir := config.TenantWorkspace(cfg.WorkspacePath(), tid, slug)
@@ -106,8 +127,9 @@ Modes:
 		},
 	}
 
-	cmd.Flags().StringVar(&tenantSlug, "tenant", "", "target tenant slug")
-	cmd.Flags().StringVar(&tenantID, "tenant-id", "", "target tenant UUID")
+	cmd.Flags().StringVar(&tenantSlug, "tenant", "", "existing tenant slug (upsert/replace)")
+	cmd.Flags().StringVar(&tenantID, "tenant-id", "", "existing tenant UUID (alternative to --tenant)")
+	cmd.Flags().StringVar(&newTenantSlug, "new-tenant-slug", "", "target slug when restoring in new mode")
 	cmd.Flags().StringVar(&mode, "mode", "upsert", "restore mode: upsert, replace, new")
 	cmd.Flags().BoolVar(&force, "force", false, "required for replace mode")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "inspect archive without making changes")

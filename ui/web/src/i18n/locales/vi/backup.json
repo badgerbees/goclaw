@@ -110,6 +110,8 @@
       "modeUpsert": "Hợp nhất (upsert)",
       "modeReplace": "Thay thế tất cả",
       "modeNew": "Tenant mới",
+      "newTenantSlug": "Slug tenant mới",
+      "newTenantSlugPlaceholder": "Nhập slug duy nhất cho tenant mới",
       "dropzone": "Kéo thả bản sao lưu tenant vào đây",
       "dryRun": "Chạy thử (chỉ xem trước)",
       "start": "Khôi phục Tenant",
@@ -118,6 +120,7 @@
       "running": "Đang khôi phục tenant...",
       "complete": "Khôi phục tenant hoàn tất",
       "tablesRestored": "Bảng đã khôi phục",
+      "confirmDescNew": "Thao tác này sẽ tạo một tenant mới và khôi phục bản sao lưu vào đó. Bạn có chắc chắn không?",
       "filesExtracted": "Tệp đã giải nén",
       "dryRunNote": "Chạy thử — không có thay đổi",
       "newRestore": "Khôi phục mới"

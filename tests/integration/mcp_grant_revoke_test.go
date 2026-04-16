@@ -20,8 +20,8 @@ import (
 // TestBridgeTool_Execute_RevokeAgentGrant_ReturnsError verifies that after revoking
 // an agent grant, BridgeTool.Execute returns an error instead of executing the tool.
 //
-// This test MUST FAIL initially (Phase 01 TDD) because BridgeTool.Execute currently
-// only checks `connected` status — it does NOT recheck grants.
+// This test verifies that BridgeTool.Execute rechecks grants and returns a
+// grant-revoked error after the agent grant is removed.
 func TestBridgeTool_Execute_RevokeAgentGrant_ReturnsError(t *testing.T) {
 	db := testDB(t)
 	tenantID, agentID := seedTenantAgent(t, db)
@@ -45,11 +45,6 @@ func TestBridgeTool_Execute_RevokeAgentGrant_ReturnsError(t *testing.T) {
 		t.Fatal("expected at least 1 accessible server after grant")
 	}
 
-	// Create a fake MCP client that returns a stub result
-	fakeClient := &fakeMCPClient{result: &mcpgo.CallToolResult{
-		Content: []mcpgo.Content{mcpgo.TextContent{Text: "success"}},
-	}}
-
 	// Create BridgeTool with the fake client
 	clientPtr := &atomic.Pointer[mcpclient.Client]{}
 	// Note: We need to cast the fake client to the interface type
@@ -71,8 +66,8 @@ func TestBridgeTool_Execute_RevokeAgentGrant_ReturnsError(t *testing.T) {
 		grantChecker,
 	)
 
-	// Execute should work before revoke (will fail due to nil client, but that's expected)
-	// The key point is: after revoke, it should return "grant revoked" error
+	// Execute after revoke should return a grant-revoked error even if the
+	// client connection is otherwise marked as active.
 
 	// Now revoke the agent grant
 	err = mcpStore.RevokeFromAgent(ctx, serverID, agentID)
@@ -80,13 +75,10 @@ func TestBridgeTool_Execute_RevokeAgentGrant_ReturnsError(t *testing.T) {
 		t.Fatalf("RevokeFromAgent: %v", err)
 	}
 
-	// Execute the tool after revoke
-	// EXPECTED (after Phase 02 fix): should return ErrorResult with "grant revoked"
-	// ACTUAL (currently): will try to execute and fail with "no active client" or succeed
+	// Execute the tool after revoke.
 	result := tool.Execute(ctx, map[string]any{"arg": "value"})
 
-	// This assertion SHOULD PASS after Phase 02, but FAILS now
-	// because BridgeTool.Execute does NOT recheck grants
+	// BridgeTool.Execute should recheck grants and return a grant-revoked error.
 	if !result.IsError {
 		t.Error("expected error result after grant revoked, but got success")
 	}
@@ -98,7 +90,8 @@ func TestBridgeTool_Execute_RevokeAgentGrant_ReturnsError(t *testing.T) {
 // TestBridgeTool_Execute_RevokeUserGrant_ReturnsError verifies that after revoking
 // a user grant, BridgeTool.Execute returns an error.
 //
-// This test MUST FAIL initially (Phase 01 TDD).
+// This test verifies that BridgeTool.Execute rechecks grants and returns a
+// grant-revoked error after the user grant is removed.
 func TestBridgeTool_Execute_RevokeUserGrant_ReturnsError(t *testing.T) {
 	db := testDB(t)
 	tenantID, agentID := seedTenantAgent(t, db)
@@ -151,12 +144,10 @@ func TestBridgeTool_Execute_RevokeUserGrant_ReturnsError(t *testing.T) {
 		t.Fatalf("RevokeFromUser: %v", err)
 	}
 
-	// Execute the tool after user revoke
-	// EXPECTED (after Phase 02 fix): should return "grant revoked" since user lost access
-	// ACTUAL (currently): does not check user grants at execute time
+	// Execute the tool after user revoke.
 	result := tool.Execute(ctx, map[string]any{"arg": "value"})
 
-	// This assertion SHOULD PASS after Phase 02, but FAILS now
+	// BridgeTool.Execute should recheck grants and return a grant-revoked error.
 	if !result.IsError {
 		t.Error("expected error result after user grant revoked")
 	}

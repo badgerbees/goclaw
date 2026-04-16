@@ -14,8 +14,18 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/eventbus"
 	"github.com/nextlevelbuilder/goclaw/internal/hooks"
 	hookhandlers "github.com/nextlevelbuilder/goclaw/internal/hooks/handlers"
+	"github.com/nextlevelbuilder/goclaw/internal/security"
 	"github.com/nextlevelbuilder/goclaw/internal/store/pg"
 )
+
+// allowLoopbackForTest relaxes SSRF checks for the duration of a single test
+// so httptest servers on 127.0.0.1 can receive requests. Phase 4 covers all
+// integration tests that spin up fake HTTP endpoints.
+func allowLoopbackForTest(t *testing.T) {
+	t.Helper()
+	security.SetAllowLoopbackForTest(true)
+	t.Cleanup(func() { security.SetAllowLoopbackForTest(false) })
+}
 
 // newDispatcher wires a StdDispatcher with the supplied handler map over a
 // live PG hook store. Audit writer runs without encryption (dev mode).
@@ -65,7 +75,7 @@ func TestHooksIntegration_HTTPHandler_AllowWritesAudit(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		db.Exec("DELETE FROM hook_executions WHERE hook_id = $1", hookID)
-		db.Exec("DELETE FROM agent_hooks WHERE id = $1", hookID)
+		db.Exec("DELETE FROM hooks WHERE id = $1", hookID)
 	})
 
 	d := newDispatcher(t, hs, map[hooks.HandlerType]hooks.Handler{
@@ -78,12 +88,12 @@ func TestHooksIntegration_HTTPHandler_AllowWritesAudit(t *testing.T) {
 		AgentID:   agentID,
 		HookEvent: hooks.EventUserPromptSubmit,
 	}
-	dec, err := d.Fire(ctx, ev)
+	r, err := d.Fire(ctx, ev)
 	if err != nil {
 		t.Fatalf("Fire: %v", err)
 	}
-	if dec != hooks.DecisionAllow {
-		t.Errorf("decision=%q, want allow", dec)
+	if r.Decision != hooks.DecisionAllow {
+		t.Errorf("decision=%q, want allow", r.Decision)
 	}
 
 	// Give the audit writer a moment (sync path, but defensive).
@@ -136,7 +146,7 @@ func TestHooksIntegration_HTTPHandler_Block(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		db.Exec("DELETE FROM hook_executions WHERE hook_id = $1", hookID)
-		db.Exec("DELETE FROM agent_hooks WHERE id = $1", hookID)
+		db.Exec("DELETE FROM hooks WHERE id = $1", hookID)
 	})
 
 	d := newDispatcher(t, hs, map[hooks.HandlerType]hooks.Handler{
@@ -149,12 +159,12 @@ func TestHooksIntegration_HTTPHandler_Block(t *testing.T) {
 		AgentID:   agentID,
 		HookEvent: hooks.EventUserPromptSubmit,
 	}
-	dec, err := d.Fire(ctx, ev)
+	r, err := d.Fire(ctx, ev)
 	if err != nil {
 		t.Fatalf("Fire: %v", err)
 	}
-	if dec != hooks.DecisionBlock {
-		t.Errorf("decision=%q, want block", dec)
+	if r.Decision != hooks.DecisionBlock {
+		t.Errorf("decision=%q, want block", r.Decision)
 	}
 
 	var count int
@@ -198,7 +208,7 @@ func TestHooksIntegration_CommandHandler_LiteEdition(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		db.Exec("DELETE FROM hook_executions WHERE hook_id = $1", hookID)
-		db.Exec("DELETE FROM agent_hooks WHERE id = $1", hookID)
+		db.Exec("DELETE FROM hooks WHERE id = $1", hookID)
 	})
 
 	d := newDispatcher(t, hs, map[hooks.HandlerType]hooks.Handler{
@@ -211,12 +221,12 @@ func TestHooksIntegration_CommandHandler_LiteEdition(t *testing.T) {
 		AgentID:   agentID,
 		HookEvent: hooks.EventUserPromptSubmit,
 	}
-	dec, err := d.Fire(ctx, ev)
+	r, err := d.Fire(ctx, ev)
 	if err != nil {
 		t.Fatalf("Fire: %v", err)
 	}
-	if dec != hooks.DecisionAllow {
-		t.Errorf("decision=%q, want allow", dec)
+	if r.Decision != hooks.DecisionAllow {
+		t.Errorf("decision=%q, want allow", r.Decision)
 	}
 
 	var count int

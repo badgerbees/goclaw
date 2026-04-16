@@ -93,7 +93,6 @@ func (m *Manager) OpenTab(ctx context.Context, url string) (*TabInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open tab: %w", err)
 	}
-
 	tid := string(page.TargetID)
 	m.pages[tid] = page
 	m.touchPageLocked(tid)

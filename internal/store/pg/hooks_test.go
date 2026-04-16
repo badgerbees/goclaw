@@ -196,10 +196,20 @@ func TestPGHookStore_TenantIsolation(t *testing.T) {
 
 	// Tenant B cannot read tenant A's hook
 	got, err := s.GetByID(ctxB, idA)
-	// GetByID has no tenant filter — returns the row regardless of scope.
-	// List should filter it out though.
-	_ = got
-	_ = err
+	if err != nil {
+		t.Fatalf("GetByID B: %v", err)
+	}
+	if got != nil {
+		t.Errorf("tenant B saw tenant A hook %s in GetByID", idA)
+	}
+
+	gotMaster, err := s.GetByID(masterCtx(), idA)
+	if err != nil {
+		t.Fatalf("GetByID master: %v", err)
+	}
+	if gotMaster == nil {
+		t.Fatal("master scope should see tenant A hook in GetByID")
+	}
 
 	// List from tenant B should not see tenant A's hooks.
 	listB, err := s.List(ctxB, hooks.ListFilter{})

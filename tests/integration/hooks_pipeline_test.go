@@ -36,6 +36,7 @@ func TestHooksIntegration_HTTPHandler_AllowWritesAudit(t *testing.T) {
 	db := testDB(t)
 	tenantID, agentID := seedTenantAgent(t, db)
 	ctx := tenantCtx(tenantID)
+	allowLoopbackForTest(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -104,6 +105,7 @@ func TestHooksIntegration_HTTPHandler_Block(t *testing.T) {
 	db := testDB(t)
 	tenantID, agentID := seedTenantAgent(t, db)
 	ctx := tenantCtx(tenantID)
+	allowLoopbackForTest(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

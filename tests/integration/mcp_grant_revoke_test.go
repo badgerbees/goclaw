@@ -74,6 +74,7 @@ func TestBridgeTool_Execute_RevokeAgentGrant_ReturnsError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RevokeFromAgent: %v", err)
 	}
+	grantChecker.Invalidate()
 
 	// Execute the tool after revoke.
 	result := tool.Execute(ctx, map[string]any{"arg": "value"})
@@ -143,6 +144,7 @@ func TestBridgeTool_Execute_RevokeUserGrant_ReturnsError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RevokeFromUser: %v", err)
 	}
+	grantChecker.Invalidate()
 
 	// Execute the tool after user revoke.
 	result := tool.Execute(ctx, map[string]any{"arg": "value"})

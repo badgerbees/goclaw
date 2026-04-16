@@ -35,7 +35,7 @@ func hooksTestDB(t *testing.T) *sql.DB {
 		t.Skipf("PG not reachable: %v", err)
 	}
 
-	m, err := migrate.New("file://../../../../migrations", dsn)
+	m, err := migrate.New("file://../../../migrations", dsn)
 	if err != nil {
 		db.Close()
 		t.Fatalf("migrate.New: %v", err)

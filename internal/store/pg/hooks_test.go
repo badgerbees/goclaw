@@ -59,14 +59,14 @@ func seedTenantAndAgent(t *testing.T, db *sql.DB) (tenantID, agentID uuid.UUID) 
 
 	_, err := db.Exec(
 		`INSERT INTO tenants (id, name, slug, status) VALUES ($1,$2,$3,'active') ON CONFLICT DO NOTHING`,
-		tenantID, "hook-test-"+tenantID.String()[:8], "ht"+tenantID.String()[:8])
+		tenantID, "hook-test-"+tenantID.String(), "ht"+tenantID.String())
 	if err != nil {
 		t.Fatalf("seed tenant: %v", err)
 	}
 	_, err = db.Exec(
 		`INSERT INTO agents (id, tenant_id, agent_key, agent_type, status, provider, model, owner_id)
 		 VALUES ($1,$2,$3,'predefined','active','test','test-model','owner') ON CONFLICT DO NOTHING`,
-		agentID, tenantID, "hook-agent-"+agentID.String()[:8])
+		agentID, tenantID, "hook-agent-"+agentID.String())
 	if err != nil {
 		t.Fatalf("seed agent: %v", err)
 	}
@@ -243,14 +243,25 @@ func TestPGHookStore_ResolveForEvent(t *testing.T) {
 	s := NewPGHookStore(db)
 	ctx := tenantScopedCtx(tenantID)
 
-	// Create two enabled hooks for pre_tool_use, different priorities.
-	lowPriCfg := minimalHook(tenantID, hooks.EventPreToolUse)
-	lowPriCfg.Priority = 0
-	highPriCfg := minimalHook(tenantID, hooks.EventPreToolUse)
-	highPriCfg.Priority = 10
+	// Create one tenant hook and one global hook so the resolver returns
+	// multiple rows without tripping the per-scope unique indexes.
+	tenantCfg := minimalHook(tenantID, hooks.EventPreToolUse)
+	tenantCfg.Priority = 0
+	agentIDPtr := agentID
+	tenantCfg.AgentID = &agentIDPtr
 
-	id1, _ := s.Create(ctx, lowPriCfg)
-	id2, _ := s.Create(ctx, highPriCfg)
+	globalCfg := minimalHook(hooks.SentinelTenantID, hooks.EventPreToolUse)
+	globalCfg.Scope = hooks.ScopeGlobal
+	globalCfg.Priority = 10
+
+	id1, err := s.Create(ctx, tenantCfg)
+	if err != nil {
+		t.Fatalf("Create tenant hook: %v", err)
+	}
+	id2, err := s.Create(ctx, globalCfg)
+	if err != nil {
+		t.Fatalf("Create global hook: %v", err)
+	}
 	t.Cleanup(func() {
 		s.Delete(masterCtx(), id1)
 		s.Delete(masterCtx(), id2)
@@ -276,8 +287,12 @@ func TestPGHookStore_ResolveForEvent(t *testing.T) {
 
 	// Disabled hook should not appear.
 	disabledCfg := minimalHook(tenantID, hooks.EventPreToolUse)
+	disabledCfg.HandlerType = hooks.HandlerHTTP
 	disabledCfg.Enabled = false
-	idDisabled, _ := s.Create(ctx, disabledCfg)
+	idDisabled, err := s.Create(ctx, disabledCfg)
+	if err != nil {
+		t.Fatalf("Create disabled hook: %v", err)
+	}
 	t.Cleanup(func() { s.Delete(masterCtx(), idDisabled) })
 
 	resolved2, _ := s.ResolveForEvent(ctx, event)

@@ -62,11 +62,10 @@ func TestTTSHandler_UpdateManager_SwapsProvider(t *testing.T) {
 
 // TestTTSHandler_UpdateManager_ConcurrentSafe verifies no race condition
 // when calling UpdateManager while requests are in flight.
-// Note: Uses stateless mock to avoid false race detection in mock's capturedOpts.
 func TestTTSHandler_UpdateManager_ConcurrentSafe(t *testing.T) {
 	setupTestToken(t, "") // dev mode
 
-	// Use stateless mock — each provider is separate instance
+	// Use a thread-safe mock; the test only cares that UpdateManager stays safe.
 	mgr := audio.NewManager(audio.ManagerConfig{Primary: "mock"})
 	mgr.RegisterTTS(&mockTTSProvider{name: "mock"})
 

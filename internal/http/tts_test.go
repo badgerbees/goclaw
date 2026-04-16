@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -20,6 +21,7 @@ const ttsTestToken = "tts-test-token"
 // --- Mock TTS provider ---
 
 type mockTTSProvider struct {
+	mu           sync.Mutex
 	name         string
 	capturedOpts audio.TTSOptions
 	result       *audio.SynthResult
@@ -30,7 +32,9 @@ type mockTTSProvider struct {
 func (m *mockTTSProvider) Name() string { return m.name }
 
 func (m *mockTTSProvider) Synthesize(ctx context.Context, text string, opts audio.TTSOptions) (*audio.SynthResult, error) {
+	m.mu.Lock()
 	m.capturedOpts = opts
+	m.mu.Unlock()
 	if m.block {
 		<-ctx.Done()
 		return nil, ctx.Err()

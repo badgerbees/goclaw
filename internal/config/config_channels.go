@@ -372,6 +372,7 @@ type ToolsConfig struct {
 	ByProvider       map[string]*ToolPolicySpec  `json:"byProvider,omitempty"` // per-provider overrides
 	ExecApproval     ExecApprovalCfg             `json:"execApproval"`         // exec command approval settings
 	WebFetch         WebFetchPolicyConfig        `json:"web_fetch"`            // domain policy for URL fetching
+	GitHub           GitHubToolConfig            `json:"github"`               // GitHub REST API token for github_read
 	Browser          BrowserToolConfig           `json:"browser"`
 	RateLimitPerHour int                         `json:"rate_limit_per_hour,omitempty"` // max tool executions per hour per session (0 = disabled)
 	ScrubCredentials *bool                       `json:"scrub_credentials,omitempty"`   // auto-redact API keys/tokens in tool output (default true)

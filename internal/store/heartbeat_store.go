@@ -87,8 +87,9 @@ func StaggerOffset(agentID uuid.UUID, intervalSec int) time.Duration {
 }
 
 // NextHeartbeatRunAt returns the next stable-phase run time for a heartbeat.
-// The first run uses the deterministic stagger so agents fan out, and later
-// runs advance from the previous scheduled slot so late completions do not drift.
+// The first run uses the deterministic stagger so agents fan out, later runs
+// advance from the previous scheduled slot, and very stale anchors snap to
+// now + interval so a restart does not replay a large backlog.
 func NextHeartbeatRunAt(now time.Time, agentID uuid.UUID, intervalSec int, anchor *time.Time) time.Time {
 	if intervalSec <= 0 {
 		return now
@@ -100,6 +101,9 @@ func NextHeartbeatRunAt(now time.Time, agentID uuid.UUID, intervalSec int, ancho
 	}
 
 	next := anchor.Add(interval)
+	if now.Sub(next) > interval {
+		return now.Add(interval)
+	}
 	for !next.After(now) {
 		next = next.Add(interval)
 	}

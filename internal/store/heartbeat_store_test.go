@@ -34,11 +34,11 @@ func TestNextHeartbeatRunAt_AdvancesFromAnchorWithoutDrift(t *testing.T) {
 	}
 }
 
-func TestNextHeartbeatRunAt_SkipsMissedIntervalsToFuturePhase(t *testing.T) {
+func TestNextHeartbeatRunAt_CapsCatchUpAfterLongDowntime(t *testing.T) {
 	now := time.Date(2026, time.March, 28, 12, 0, 0, 0, time.UTC)
 	agentID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
 	intervalSec := 300
-	anchor := now.Add(-20 * time.Minute)
+	anchor := now.Add(-31 * time.Minute)
 
 	want := now.Add(5 * time.Minute)
 	got := NextHeartbeatRunAt(now, agentID, intervalSec, &anchor)

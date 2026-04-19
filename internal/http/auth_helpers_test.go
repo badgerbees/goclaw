@@ -168,9 +168,9 @@ func TestIsHTTPOwnerID_EmptyUserID_NotOwner(t *testing.T) {
 	}
 }
 
-func TestIsHTTPOwnerID_EmptyOwnerList_OnlySystemIsOwner(t *testing.T) {
-	if !isHTTPOwnerID("system", nil) {
-		t.Error("'system' is default owner when no owner IDs configured")
+func TestIsHTTPOwnerID_EmptyOwnerList_NoOwners(t *testing.T) {
+	if isHTTPOwnerID("system", nil) {
+		t.Error("system should not be owner with empty owner list")
 	}
 	if isHTTPOwnerID("admin", nil) {
 		t.Error("non-system user should not be owner with empty owner list")

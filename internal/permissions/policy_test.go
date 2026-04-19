@@ -276,6 +276,9 @@ func TestIsOwner(t *testing.T) {
 	if !pe.IsOwner("bob") {
 		t.Fatal("bob should be owner")
 	}
+	if pe.IsOwner("system") {
+		t.Fatal("system should not be owner unless configured")
+	}
 	if pe.IsOwner("charlie") {
 		t.Fatal("charlie should not be owner")
 	}
@@ -288,6 +291,9 @@ func TestIsOwner_EmptyList(t *testing.T) {
 	pe := NewPolicyEngine(nil)
 	if pe.IsOwner("anyone") {
 		t.Fatal("no one should be owner with empty list")
+	}
+	if pe.IsOwner("system") {
+		t.Fatal("system should not be owner with empty list")
 	}
 }
 

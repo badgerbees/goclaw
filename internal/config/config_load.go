@@ -68,6 +68,7 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			cfg.applyEnvOverrides()
+			cfg.Gateway.OwnerIDs = NormalizeOwnerIDs(cfg.Gateway.OwnerIDs)
 			return cfg, nil
 		}
 		return nil, fmt.Errorf("read config: %w", err)
@@ -78,6 +79,7 @@ func Load(path string) (*Config, error) {
 	}
 
 	cfg.applyEnvOverrides()
+	cfg.Gateway.OwnerIDs = NormalizeOwnerIDs(cfg.Gateway.OwnerIDs)
 	return cfg, nil
 }
 
@@ -277,6 +279,21 @@ func (c *Config) applyEnvOverrides() {
 	}
 }
 
+// NormalizeOwnerIDs trims whitespace, removes duplicates, and drops the
+// reserved "system" identifier so runtime owner checks only use real users.
+func NormalizeOwnerIDs(ownerIDs []string) []string {
+	normalized := make([]string, 0, len(ownerIDs))
+	seen := make(map[string]bool, len(ownerIDs))
+	for _, id := range ownerIDs {
+		trimmed := strings.TrimSpace(id)
+		if trimmed == "" || trimmed == "system" || seen[trimmed] {
+			continue
+		}
+		seen[trimmed] = true
+		normalized = append(normalized, trimmed)
+	}
+	return normalized
+}
 
 // Save writes the config to a JSON file.
 func Save(path string, cfg *Config) error {

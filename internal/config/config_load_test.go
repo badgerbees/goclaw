@@ -263,3 +263,18 @@ func TestLoad_OwnerIDsEmpty(t *testing.T) {
 		}
 	}
 }
+
+func TestLoad_OwnerIDsSystemStripped(t *testing.T) {
+	t.Setenv("GOCLAW_OWNER_IDS", "alice, system, bob")
+
+	cfg, err := Load("/nonexistent/path")
+	if err != nil {
+		t.Fatalf("load error: %v", err)
+	}
+	if len(cfg.Gateway.OwnerIDs) != 2 {
+		t.Fatalf("expected 2 owner IDs, got %d: %v", len(cfg.Gateway.OwnerIDs), cfg.Gateway.OwnerIDs)
+	}
+	if cfg.Gateway.OwnerIDs[0] != "alice" || cfg.Gateway.OwnerIDs[1] != "bob" {
+		t.Fatalf("unexpected owner IDs: %v", cfg.Gateway.OwnerIDs)
+	}
+}

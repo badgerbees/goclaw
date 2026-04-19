@@ -116,13 +116,9 @@ func InitOwnerIDs(ids []string) {
 }
 
 // isHTTPOwnerID checks if the user ID is a configured owner.
-// If no owner IDs configured, only "system" is treated as owner (fail-closed).
 func isHTTPOwnerID(userID string, ownerIDs []string) bool {
 	if userID == "" {
 		return false
-	}
-	if len(ownerIDs) == 0 {
-		return userID == "system"
 	}
 	return slices.Contains(ownerIDs, userID)
 }

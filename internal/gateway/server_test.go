@@ -266,9 +266,9 @@ func TestIsOwnerID_EmptyUserID_NotOwner(t *testing.T) {
 	}
 }
 
-func TestIsOwnerID_EmptyOwnerList_OnlySystemIsOwner(t *testing.T) {
-	if !isOwnerID("system", nil) {
-		t.Error("'system' should be default owner when no owner IDs configured")
+func TestIsOwnerID_EmptyOwnerList_NoOwners(t *testing.T) {
+	if isOwnerID("system", nil) {
+		t.Error("system should not be owner when no owner IDs configured")
 	}
 	if isOwnerID("admin", nil) {
 		t.Error("non-system user should not be owner when no owner IDs configured")

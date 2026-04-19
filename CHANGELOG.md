@@ -30,6 +30,9 @@ All notable changes to GoClaw are documented here. For full documentation, see [
   missing a `mode` field get auto-backfilled with `mode: "cache-ttl"` to
   preserve their intent after the opt-in flip. Rows with NULL config stay
   NULL (new opt-in default applies). PG migration 51; SQLite schema v19.
+- **Owner recovery command.** Added `goclaw config owner-ids set ...` to repair
+  a broken owner allowlist directly from the config file without touching the
+  gateway auth path.
 
 ## Project Status
 

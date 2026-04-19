@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"sync/atomic"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/bus"
 	"github.com/nextlevelbuilder/goclaw/internal/config"
 	"github.com/nextlevelbuilder/goclaw/internal/eventbus"
+	"github.com/nextlevelbuilder/goclaw/internal/hooks"
 	mcpbridge "github.com/nextlevelbuilder/goclaw/internal/mcp"
 	"github.com/nextlevelbuilder/goclaw/internal/media"
 	"github.com/nextlevelbuilder/goclaw/internal/memory"
@@ -18,6 +20,7 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/sandbox"
 	"github.com/nextlevelbuilder/goclaw/internal/skills"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
+	"github.com/nextlevelbuilder/goclaw/internal/tokencount"
 	"github.com/nextlevelbuilder/goclaw/internal/tools"
 	"github.com/nextlevelbuilder/goclaw/internal/tracing"
 )
@@ -68,10 +71,20 @@ type CacheInvalidateFunc func(agentID uuid.UUID, userID string)
 // Loop is the agent execution loop for one agent instance.
 // Think → Act → Observe cycle with tool execution.
 type Loop struct {
-	id               string
-	displayName      string
-	agentUUID        uuid.UUID // set for context propagation
+	// id is the human-readable agent_key (e.g. "goctech-leader"). Use for logs,
+	// UI events, system prompt rendering, filesystem paths, and context keys.
+	// NEVER set on DB FK columns or DomainEvent.AgentID — those require UUID.
+	// See docs/agent-identity-conventions.md.
+	id          string
+	displayName string
+	// agentUUID is the canonical DB primary key. Use for SQL WHERE/JOIN,
+	// DomainEvent.AgentID, OTel span attributes, and context propagation via
+	// store.WithAgentID. See docs/agent-identity-conventions.md.
+	agentUUID        uuid.UUID
 	tenantID         uuid.UUID // agent's owning tenant
+	// agentOtherConfig is a defensive byte copy of agents.other_config JSONB.
+	// Copied once at Loop construction; used to build AgentAudioSnapshot at tool dispatch.
+	agentOtherConfig json.RawMessage
 	agentType        string    // "open" or "predefined"
 	defaultTimezone  string    // system default timezone for bootstrap pre-fill
 	provider         providers.Provider
@@ -99,6 +112,7 @@ type Loop struct {
 	domainBus       eventbus.DomainEventBus // V3 domain event bus for consolidation pipeline
 	sessions        store.SessionStore
 	tools           tools.ToolExecutor
+	registry        *tools.Registry        // direct registry access for MergeToolGroup (per-Registry tool groups)
 	toolPolicy      *tools.PolicyEngine    // optional: filters tools sent to LLM
 	agentToolPolicy *config.ToolPolicySpec // per-agent tool policy from DB (nil = no restrictions)
 	activeRuns      atomic.Int32           // number of currently executing runs
@@ -123,16 +137,21 @@ type Loop struct {
 	userSetups        sync.Map            // userID → *userSetup (workspace + seeding state, per Loop instance)
 
 	// Per-user MCP tools: servers requiring user credentials get connected per-request.
-	mcpStore        store.MCPServerStore  // for credential lookup
-	mcpPool         *mcpbridge.Pool       // user-keyed connection pool
-	mcpUserCredSrvs []store.MCPAccessInfo // servers needing per-user creds
-	mcpUserTools    sync.Map              // userID → []tools.Tool (cached per-user tools)
+	mcpStore        store.MCPServerStore    // for credential lookup
+	mcpPool         *mcpbridge.Pool         // user-keyed connection pool
+	mcpUserCredSrvs []store.MCPAccessInfo   // servers needing per-user creds
+	mcpUserTools    sync.Map                // userID → []tools.Tool (cached per-user tools)
+	mcpGrantChecker mcpbridge.GrantChecker  // runtime grant verification (nil = skip)
 
 	// Compaction config (memory flush settings)
 	compactionCfg *config.CompactionConfig
 
 	// Context pruning config (trim old tool results in-memory)
 	contextPruningCfg *config.ContextPruningConfig
+
+	// tokenCounter provides accurate per-model token counting for context pruning.
+	// Nil means the legacy char-based heuristic is used.
+	tokenCounter tokencount.TokenCounter
 
 	// Sandbox info
 	sandboxEnabled         bool
@@ -153,8 +172,18 @@ type Loop struct {
 	injectionAction string // "log", "warn" (default), "block", "off"
 	maxMessageChars int    // 0 = use default (32000)
 
-	// Global builtin tool settings (from builtin_tools table)
+	// Global builtin tool settings (from builtin_tools.settings table).
+	// Tier 3 in the overlay — tenant (tier 2) and future per-agent (tier 1) sit above.
 	builtinToolSettings tools.BuiltinToolSettings
+
+	// Tenant-layer tool settings overlay (from builtin_tool_tenant_configs.settings).
+	// Tier 2 — sits above global (tier 3) and is merged at read time in
+	// BuiltinToolSettingsFromCtx with global winning at tool-name level.
+	tenantToolSettings tools.BuiltinToolSettings
+
+	// Tenant-specific allowed paths beyond workspace (from system_configs['allowed_paths']).
+	// Filesystem tools (read_file, write_file, edit, list_files) check these at execution time.
+	tenantAllowedPaths []string
 
 	// Per-tenant disabled tools (tool name → true means excluded from LLM)
 	disabledTools map[string]bool
@@ -170,6 +199,9 @@ type Loop struct {
 
 	// Self-evolve: predefined agents can update SOUL.md through chat
 	selfEvolve bool
+
+	// TTS auto mode from config: "off", "always", "inbound", "tagged"
+	ttsAutoMode string
 
 	// Skill learning loop: when skillEvolve=true, the loop injects nudges reminding
 	// the agent to capture reusable patterns as skills via skill_manage.
@@ -215,6 +247,19 @@ type Loop struct {
 
 	// User identity resolver: maps channel contacts to merged tenant users for credential lookups.
 	userResolver UserIdentityResolver
+
+	// Per-session cache-touch timestamps for the cache-TTL pruning gate (Phase 06).
+	// Key: sessionKey (string), Value: time.Time of last prune mutation.
+	// sync.Map zero value is ready to use — no init required.
+	// Grows with distinct sessions; typical gateway has bounded session count.
+	// Note: in-memory only — timestamps reset on process restart (one extra prune
+	// per session on restart, then steady-state resumes).
+	cacheTouchBySession sync.Map
+
+	// hookDispatcher fires lifecycle hook events (Issue #875). Nil-safe: when
+	// nil the pipeline fast-path skips all hook overhead. Populated from
+	// LoopConfig.HookDispatcher during startup wiring.
+	hookDispatcher hooks.Dispatcher
 }
 
 // AgentEvent is emitted during agent execution for WS broadcasting.
@@ -232,6 +277,7 @@ type AgentEvent struct {
 	ParentAgentID string `json:"parentAgentId,omitempty"`
 
 	// Routing context (helps WS clients filter by user/channel/session)
+	SenderID   string `json:"senderId,omitempty"` // original acting user; differs from UserID in group chats
 	UserID     string `json:"userId,omitempty"`
 	Channel    string `json:"channel,omitempty"`
 	ChatID     string `json:"chatId,omitempty"`
@@ -269,6 +315,7 @@ type LoopConfig struct {
 
 	Bus             bus.EventPublisher
 	DomainBus       eventbus.DomainEventBus // V3 domain event bus for consolidation pipeline
+	HookDispatcher  hooks.Dispatcher        // lifecycle hook dispatcher (nil = noop)
 	Sessions        store.SessionStore
 	Tools           *tools.Registry
 	ToolPolicy      *tools.PolicyEngine    // optional: filters tools sent to LLM
@@ -297,9 +344,10 @@ type LoopConfig struct {
 	ShellDenyGroups map[string]bool
 
 	// Agent UUID + tenant for context propagation to tools
-	AgentUUID   uuid.UUID
-	TenantID    uuid.UUID // agent's owning tenant — injected into execution context
-	AgentType   string    // "open" or "predefined"
+	AgentUUID        uuid.UUID
+	TenantID         uuid.UUID        // agent's owning tenant — injected into execution context
+	AgentOtherConfig json.RawMessage  // raw other_config JSONB — copied defensively in NewLoop
+	AgentType        string           // "open" or "predefined"
 	DisplayName string    // human-readable agent display name (for runtime section)
 	IsTeamLead bool      // agent leads a team (from resolver detection)
 
@@ -320,8 +368,14 @@ type LoopConfig struct {
 	InjectionAction string      // "log", "warn" (default), "block", "off"
 	MaxMessageChars int         // 0 = use default (32000)
 
-	// Global builtin tool settings (from builtin_tools table)
+	// Global builtin tool settings (from builtin_tools table, merged with per-agent overrides)
 	BuiltinToolSettings tools.BuiltinToolSettings
+
+	// Tenant-layer tool settings overlay (from builtin_tool_tenant_configs.settings).
+	TenantToolSettings tools.BuiltinToolSettings
+
+	// Tenant-specific allowed paths beyond workspace (from system_configs['allowed_paths']).
+	TenantAllowedPaths []string
 
 	// Per-tenant disabled tools (tool name → true means excluded)
 	DisabledTools map[string]bool
@@ -337,6 +391,10 @@ type LoopConfig struct {
 
 	// Self-evolve: predefined agents can update SOUL.md (style/tone) through chat
 	SelfEvolve bool
+
+	// TTS auto mode from config: "off", "always", "inbound", "tagged"
+	// When "tagged", inject [[tts]] directive guidance into system prompt.
+	TTSAutoMode string
 
 	// Skill evolution: agent learning loop config (from other_config JSONB)
 	SkillEvolve        bool
@@ -368,9 +426,10 @@ type LoopConfig struct {
 	MemoryStore store.MemoryStore
 
 	// Per-user MCP tools (servers requiring per-user credentials)
-	MCPStore        store.MCPServerStore  // for credential lookup
-	MCPPool         *mcpbridge.Pool       // user-keyed connection pool
-	MCPUserCredSrvs []store.MCPAccessInfo // servers needing per-user creds
+	MCPStore        store.MCPServerStore    // for credential lookup
+	MCPPool         *mcpbridge.Pool         // user-keyed connection pool
+	MCPUserCredSrvs []store.MCPAccessInfo   // servers needing per-user creds
+	MCPGrantChecker mcpbridge.GrantChecker  // runtime grant verification (nil = skip)
 
 	// V3 orchestration mode (resolved by resolver, controls tool visibility)
 	OrchMode          OrchestrationMode
@@ -421,6 +480,7 @@ func NewLoop(cfg LoopConfig) *Loop {
 		displayName:            cfg.DisplayName,
 		agentUUID:              cfg.AgentUUID,
 		tenantID:               cfg.TenantID,
+		agentOtherConfig:       append([]byte(nil), cfg.AgentOtherConfig...), // defensive copy
 		agentType:              cfg.AgentType,
 		provider:               cfg.Provider,
 		model:                  cfg.Model,
@@ -439,8 +499,10 @@ func NewLoop(cfg LoopConfig) *Loop {
 		sandboxCfg:             cfg.SandboxCfg,
 		eventPub:               cfg.Bus,
 		domainBus:              cfg.DomainBus,
+		hookDispatcher:         cfg.HookDispatcher,
 		sessions:               cfg.Sessions,
 		tools:                  cfg.Tools,
+		registry:               cfg.Tools,
 		toolPolicy:             cfg.ToolPolicy,
 		agentToolPolicy:        cfg.AgentToolPolicy,
 		onEvent:                cfg.OnEvent,
@@ -458,6 +520,7 @@ func NewLoop(cfg LoopConfig) *Loop {
 		cacheInvalidate:        cfg.CacheInvalidate,
 		compactionCfg:          cfg.CompactionCfg,
 		contextPruningCfg:      cfg.ContextPruningCfg,
+		tokenCounter:           tokencount.NewTiktokenCounter(),
 		sandboxEnabled:         cfg.SandboxEnabled,
 		sandboxContainerDir:    cfg.SandboxContainerDir,
 		sandboxWorkspaceAccess: cfg.SandboxWorkspaceAccess,
@@ -467,11 +530,14 @@ func NewLoop(cfg LoopConfig) *Loop {
 		injectionAction:        action,
 		maxMessageChars:        cfg.MaxMessageChars,
 		builtinToolSettings:    cfg.BuiltinToolSettings,
+		tenantToolSettings:     cfg.TenantToolSettings,
+		tenantAllowedPaths:     cfg.TenantAllowedPaths,
 		disabledTools:          cfg.DisabledTools,
 		reasoningConfig:        cfg.ReasoningConfig,
 		promptMode:             cfg.PromptMode,
 		pinnedSkills:           cfg.PinnedSkills,
 		selfEvolve:             cfg.SelfEvolve,
+		ttsAutoMode:            cfg.TTSAutoMode,
 		skillEvolve:            cfg.SkillEvolve,
 		skillNudgeInterval:     cfg.SkillNudgeInterval,
 		isTeamLead:             cfg.IsTeamLead,
@@ -487,6 +553,7 @@ func NewLoop(cfg LoopConfig) *Loop {
 		mcpStore:               cfg.MCPStore,
 		mcpPool:                cfg.MCPPool,
 		mcpUserCredSrvs:        cfg.MCPUserCredSrvs,
+		mcpGrantChecker:        cfg.MCPGrantChecker,
 		orchMode:               cfg.OrchMode,
 		delegateTargets:        cfg.DelegateTargets,
 		evolutionMetricsStore:  cfg.EvolutionMetricsStore,
@@ -509,6 +576,7 @@ type RunRequest struct {
 	UserID            string             // external user ID (TEXT, free-form) for multi-tenant scoping
 	SenderID          string             // original individual sender ID (preserved in group chats for permission checks)
 	SenderName        string             // display name from channel metadata (for bootstrap auto-contact)
+	Role              string             // caller's RBAC role (admin/operator/viewer/owner); bypasses per-user grants for authenticated admins (#915)
 	Stream            bool               // whether to stream response chunks
 	ExtraSystemPrompt string             // optional: injected into system prompt (skills, subagent context, etc.)
 	SkillFilter       []string           // per-request skill override: nil=use agent default, []=no skills, ["x","y"]=whitelist
@@ -534,6 +602,11 @@ type RunRequest struct {
 	// When set, the loop drains this channel at turn boundaries to inject
 	// user follow-up messages into the running conversation.
 	InjectCh <-chan InjectedMessage
+
+	// OnTraceCreated is called once the trace UUID is determined for this run.
+	// Used by the gateway to associate the trace ID with the active run entry
+	// so force-abort can mark the correct trace as cancelled. Nil = no-op.
+	OnTraceCreated func(traceID uuid.UUID)
 
 	// Delegation context (set when running as a delegate agent)
 	DelegationID  string // delegation ID for event correlation
